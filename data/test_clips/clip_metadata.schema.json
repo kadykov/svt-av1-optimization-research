@@ -1,0 +1,123 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Clip Extraction Metadata",
+  "description": "Machine-generated metadata tracking extracted test clips with source information and extraction parameters. Should be committed to git for reproducibility.",
+  "type": "object",
+  "required": ["extraction_params", "clips"],
+  "properties": {
+    "extraction_params": {
+      "type": "object",
+      "description": "Parameters used for clip extraction (for reproducibility)",
+      "required": ["num_clips", "min_duration", "max_duration"],
+      "properties": {
+        "num_clips": {
+          "type": "integer",
+          "description": "Number of clips requested to be extracted",
+          "minimum": 1
+        },
+        "min_duration": {
+          "type": "number",
+          "description": "Minimum clip duration in seconds",
+          "minimum": 0,
+          "exclusiveMinimum": true
+        },
+        "max_duration": {
+          "type": "number",
+          "description": "Maximum clip duration in seconds",
+          "minimum": 0,
+          "exclusiveMinimum": true
+        },
+        "category": {
+          "type": ["string", "null"],
+          "description": "Optional category filter applied"
+        },
+        "max_width": {
+          "type": ["integer", "null"],
+          "description": "Optional maximum width filter in pixels"
+        },
+        "max_height": {
+          "type": ["integer", "null"],
+          "description": "Optional maximum height filter in pixels"
+        },
+        "min_fps": {
+          "type": ["number", "null"],
+          "description": "Optional minimum FPS filter"
+        },
+        "max_fps": {
+          "type": ["number", "null"],
+          "description": "Optional maximum FPS filter"
+        },
+        "seed": {
+          "type": ["integer", "null"],
+          "description": "Random seed used for reproducibility (null if not set)"
+        }
+      },
+      "additionalProperties": false
+    },
+    "clips": {
+      "type": "array",
+      "description": "List of extracted clips with metadata",
+      "items": {
+        "type": "object",
+        "required": ["clip_name", "video_id", "start_time", "duration", "source_width", "source_height", "source_fps", "categories", "file_size_bytes", "sha256"],
+        "properties": {
+          "clip_name": {
+            "type": "string",
+            "description": "Filename of the extracted clip"
+          },
+          "video_id": {
+            "type": "string",
+            "description": "ID of the source video",
+            "pattern": "^[a-z0-9_]+$"
+          },
+          "start_time": {
+            "type": "number",
+            "description": "Start time in source video (seconds)",
+            "minimum": 0
+          },
+          "duration": {
+            "type": "number",
+            "description": "Duration of the clip (seconds)",
+            "minimum": 0,
+            "exclusiveMinimum": true
+          },
+          "source_width": {
+            "type": "integer",
+            "description": "Width of source video in pixels",
+            "minimum": 1
+          },
+          "source_height": {
+            "type": "integer",
+            "description": "Height of source video in pixels",
+            "minimum": 1
+          },
+          "source_fps": {
+            "type": "number",
+            "description": "Frame rate of source video",
+            "minimum": 0,
+            "exclusiveMinimum": true
+          },
+          "categories": {
+            "type": "array",
+            "description": "Content categories (inherited from source video)",
+            "items": {
+              "type": "string"
+            }
+          },
+          "file_size_bytes": {
+            "type": "integer",
+            "description": "Actual file size of clip in bytes",
+            "minimum": 0
+          },
+          "sha256": {
+            "type": "string",
+            "description": "SHA256 checksum of the clip file",
+            "pattern": "^[a-f0-9]{64}$"
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

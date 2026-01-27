@@ -1,0 +1,58 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Download Metadata",
+  "description": "Machine-generated metadata tracking actual downloaded files with verification data. Should be committed to git for reproducibility.",
+  "type": "object",
+  "required": ["downloads"],
+  "properties": {
+    "downloads": {
+      "type": "object",
+      "description": "Dictionary of downloaded videos keyed by video ID",
+      "patternProperties": {
+        "^[a-z0-9_]+$": {
+          "type": "object",
+          "required": ["name", "url", "size_bytes", "checksum", "categories", "license", "file_path"],
+          "properties": {
+            "name": {
+              "type": "string",
+              "description": "Human-readable name of the video"
+            },
+            "url": {
+              "type": "string",
+              "description": "Source URL where video was downloaded from",
+              "format": "uri"
+            },
+            "size_bytes": {
+              "type": "integer",
+              "description": "Actual file size in bytes (after extraction if from .zip)",
+              "minimum": 0
+            },
+            "checksum": {
+              "type": "string",
+              "description": "SHA256 checksum of the video file for verification",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "categories": {
+              "type": "array",
+              "description": "Content categories (copied from video_sources.json)",
+              "items": {
+                "type": "string"
+              }
+            },
+            "license": {
+              "type": "string",
+              "description": "License identifier (copied from video_sources.json)"
+            },
+            "file_path": {
+              "type": "string",
+              "description": "Relative path to the downloaded video file"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

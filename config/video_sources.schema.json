@@ -1,0 +1,66 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Video Sources Configuration",
+  "description": "Human-edited configuration of video sources for download. Keep minimal - technical metadata is auto-generated in download_metadata.json",
+  "type": "object",
+  "required": ["sources"],
+  "properties": {
+    "comment": {
+      "type": "string",
+      "description": "Optional human-readable comment about this configuration"
+    },
+    "sources": {
+      "type": "array",
+      "description": "List of video sources to download",
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "url", "categories", "license"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique identifier for this video (snake_case, no spaces)",
+            "pattern": "^[a-z0-9_]+$"
+          },
+          "name": {
+            "type": "string",
+            "description": "Human-readable name of the video"
+          },
+          "url": {
+            "type": "string",
+            "description": "Direct download URL (can be .zip, .mp4, .mkv, etc.)",
+            "format": "uri"
+          },
+          "categories": {
+            "type": "array",
+            "description": "Content categories for filtering (e.g., 3d_animation, mixed_content)",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1
+          },
+          "license": {
+            "type": "string",
+            "description": "License identifier (e.g., CC-BY-3.0, CC-BY-SA-4.0)"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "future_additions": {
+      "type": "object",
+      "description": "Optional planning section for future videos",
+      "properties": {
+        "comment": {
+          "type": "string"
+        },
+        "categories_to_add": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  },
+  "additionalProperties": false
+}

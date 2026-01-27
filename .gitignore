@@ -24,6 +24,9 @@ data/encoded/*.av1
 # Keep metadata files (they contain checksums and should be tracked)
 !data/raw_videos/download_metadata.json
 
+# Generated clip metadata (reflects current clips only, not tracked)
+data/test_clips/clip_metadata.json
+
 # IDE
 .vscode/
 .idea/

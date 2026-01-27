@@ -8,15 +8,18 @@ Find optimal SVT-AV1 encoding parameters that balance:
 
 ## Approach
 
-### Phase 1: Data Collection ✅ (Current)
+### Phase 1: Data Collection ✅
 - Download diverse video test files with open licenses
 - Start with small dataset (4 videos)
 - Expand later with more categories
 
-### Phase 2: Clip Preparation (Next)
+### Phase 2: Clip Preparation ✅ (Current)
 - Extract short test clips from full videos (10-30 seconds)
 - Multiple clips per video to test different scenes
 - Store clips in consistent format
+- Random selection with optional seed for reproducibility
+- Filter by category, resolution, FPS
+- Duration range testing (codec efficiency analysis)
 
 ### Phase 3: Encoding Tests
 - Systematic parameter sweep:

@@ -40,6 +40,7 @@
 **NOT committed (in .gitignore):**
 - Video files (*.mp4, *.mkv, etc.) - Too large
 - Encoded videos - Generated outputs
+- `data/test_clips/clip_metadata.json` - Generated per extraction
 - Python venv - Reproducible via requirements.txt
 
 ### Directory Structure
@@ -48,6 +49,26 @@ No `.gitkeep` files needed because:
 1. Directories documented in README
 2. Scripts create directories as needed
 3. `download_metadata.json` keeps `raw_videos/` directory naturally
+
+### Clip Extraction Philosophy
+
+**Clean slate approach:**
+- Each extraction cleans the output directory first (default behavior)
+- Ensures metadata always matches actual clips
+- No orphaned files without metadata
+- No confusion about which clips are from which extraction
+
+**Rationale:**
+- Simpler than merging metadata from multiple extractions
+- Reproducible with `--seed` parameter
+- Each extraction is a complete, self-contained set
+- Use `--no-clean` flag if you want to keep existing clips
+
+**Benefits:**
+- Metadata file always accurate
+- No file overwrites (clean slate)
+- Clear what parameters created current clip set
+- Easy to recreate exact same clips with same seed
 
 ## Justfile Philosophy
 
