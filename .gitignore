@@ -1,53 +1,42 @@
-# Byte-compiled / optimized / DLL files
+# Python
 __pycache__/
-*.py[codz]
+*.py[cod]
 *$py.class
-
-# C extensions
 *.so
-
-# Distribution / packaging
+venv/
 .Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-share/python-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
 
-# PyInstaller
-#  Usually these files are written by a python script from a template
-#  before PyInstaller builds the exe, so as to inject date/other infos into it.
-*.manifest
-*.spec
+# Video files (large, should not be committed)
+data/raw_videos/*.mp4
+data/raw_videos/*.mkv
+data/raw_videos/*.webm
+data/raw_videos/*.mov
+data/raw_videos/*.avi
+data/raw_videos/*.zip
+data/test_clips/*.mp4
+data/test_clips/*.mkv
+data/test_clips/*.webm
+data/encoded/*.mp4
+data/encoded/*.mkv
+data/encoded/*.webm
+data/encoded/*.av1
 
-# Installer logs
-pip-log.txt
-pip-delete-this-directory.txt
+# Keep metadata files (they contain checksums and should be tracked)
+!data/raw_videos/download_metadata.json
 
-# Unit test / coverage reports
-htmlcov/
-.tox/
-.nox/
-.coverage
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-*.py.cover
-.hypothesis/
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
 .pytest_cache/
 cover/
 
