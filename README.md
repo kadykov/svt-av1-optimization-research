@@ -82,9 +82,28 @@ just extract-clips 8 20 25 --max-height 1080 --min-fps 60
 just extract-clips 10 15 30 --no-clean
 ```
 
+### Encoding Studies
+```bash
+# List available studies
+just list-studies
+
+# Dry run to see what would be encoded
+just dry-run-study baseline_sweep
+
+# Run encoding study
+just encode-study baseline_sweep
+
+# Continue despite encoding errors
+just encode-study film_grain --continue-on-error
+
+# Verbose output with FFmpeg commands
+just encode-study baseline_sweep -v
+```
+
 ### Cleanup
 ```bash
 just clean-clips          # Remove extracted clips only
+just clean-encoded        # Remove encoded videos (keeps raw + clips)
 just clean-videos         # Remove all video files (raw + clips + encoded)
 ```
 
@@ -106,6 +125,16 @@ just clean-videos         # Remove all video files (raw + clips + encoded)
 - ✅ Auto-cleanup before extraction (ensures metadata matches clips)
 - ✅ FFprobe for metadata, FFmpeg for extraction
 - ✅ Metadata tracking in `clip_metadata.json`
+
+### Encoding Studies
+- ✅ Study-based configuration system (focused parameter sweeps)
+- ✅ Automatic parameter combination generation
+- ✅ Encoding time and resource tracking
+- ✅ SHA256 checksums for encoded files
+- ✅ Detailed metadata with system info
+- ✅ Continue-on-error for resilient batch encoding
+- ✅ Dry-run mode to preview encodings
+- ✅ Support for all key SVT-AV1 parameters
 
 ## Metadata Design
 
@@ -132,11 +161,67 @@ This file is NOT committed (in .gitignore) because:
 - Each extraction is reproducible via seed
 - Cleaning before extraction ensures metadata always matches actual clips
 
+**`data/encoded/{study_name}/encoding_metadata.json`** - Machine-generated:
+- Study configuration (parameters tested)
+- System information (CPU, memory, encoder versions)
+- Per-encoding results: timing, file size, checksums, success/failure
+- Summary statistics for the entire study
+
+This file is NOT committed (in .gitignore) because:
+- Generated from running studies
+- Reproducible from study config + clips
+- Results will be published to GitHub Pages instead
+
+## Architecture Philosophy
+
+This repo contains **process and methodology**, not raw results:
+- ✅ **Commit:** Code, configs, schemas, documentation
+- ✅ **Commit:** Download metadata with checksums (for reproducibility)
+- ❌ **Don't commit:** Video files, clips, encodings, analysis results
+
+**Reproducibility through:**
+- Video sources with URLs + SHA256 checksums
+- Clip extraction with `--seed` parameter
+- Study configurations
+- Complete automation scripts
+
+**Results distribution:**
+- Local development: Run full pipeline, results stay local
+- Public results: GitHub Actions → GitHub Pages (planned)
+- GitHub Actions cache: Store encoded videos between runs
+
+## Encoding Studies
+
+Studies are focused parameter sweeps stored in `config/studies/`:
+
+**`baseline_sweep.json`** - Main study: comprehensive preset (4-10) and CRF (20-40) sweep
+- Purpose: Find optimal speed/quality/size tradeoffs
+- ~56 parameter combinations per clip
+
+**`film_grain.json`** - Film grain synthesis study
+- Purpose: Test film grain synthesis efficiency
+- Fixed preset=6, crf=28, sweeps film_grain levels and denoise flag
+
+**`screen_content.json`** - Screen content mode study
+- Purpose: Test scm parameter for screencasts
+- Fixed preset=6, crf=28, tests scm=[0,1,2]
+
+**`tune_modes.json`** - Tuning mode comparison
+- Purpose: Compare VQ, PSNR, and SSIM tuning
+- Fixed preset=6, crf=28, tests tune=[0,1,2]
+
+### Workflow
+
+1. Extract clips with appropriate filters: `just extract-category 3d_animation 5 20 30`
+2. Preview study: `just dry-run-study film_grain`
+3. Run encoding: `just encode-study film_grain`
+4. Analyze results using `data/encoded/film_grain/encoding_metadata.json`
+
 ## Development Workflow
 
 1. ✅ Small dataset
-2. ✅ Clip extraction script (current)
-3. Develop encoding pipeline
+2. ✅ Clip extraction script
+3. ✅ Encoding pipeline with study system (current)
 4. Add quality metrics (VMAF, SSIM, PSNR)
 5. Analysis and visualization
 6. Expand dataset
@@ -145,7 +230,7 @@ This file is NOT committed (in .gitignore) because:
 ## Next Steps
 
 - [x] ✅ Extract short clips from videos
-- [ ] Implement encoding with parameter sweep
+- [x] ✅ Implement encoding with parameter sweep
 - [ ] Calculate quality metrics
 - [ ] Create analysis visualizations
 - [ ] Expand video collection

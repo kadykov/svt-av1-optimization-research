@@ -1,0 +1,9 @@
+{
+  "study_name": "screen_content",
+  "description": "Screen content mode study: test scm parameter for screencasts and mixed content. Fixed preset and CRF, sweep screen content modes.",
+  "parameters": {
+    "preset": 6,
+    "crf": 28,
+    "scm": [0, 1, 2]
+  }
+}

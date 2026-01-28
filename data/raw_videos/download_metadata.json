@@ -13,18 +13,18 @@
       "license": "CC-BY-2.5",
       "file_path": "data/raw_videos/elephantsdream_teaser.mp4"
     },
-    "bbb_4k": {
-      "name": "Big Buck Bunny - 4K 60fps",
-      "url": "https://download.blender.org/demo/movies/BBB/bbb_sunflower_2160p_60fps_normal.mp4.zip",
-      "size_bytes": 673223862,
-      "checksum": "35db9a007021f1b0066993e1d2c4448c83a8b279f799c97d33cbba73980a8a36",
+    "bbb_1080p60": {
+      "name": "Big Buck Bunny - 1080p 60fps",
+      "url": "https://download.blender.org/demo/movies/BBB/bbb_sunflower_1080p_60fps_normal.mp4.zip",
+      "size_bytes": 355856562,
+      "checksum": "3aa2d8946ec7cf3b50b7148fb3338ca421e6ec34987b20a4044845d674794e3e",
       "categories": [
         "3d_animation",
         "high_motion",
         "colorful"
       ],
       "license": "CC-BY-3.0",
-      "file_path": "data/raw_videos/bbb_sunflower_2160p_60fps_normal.mp4"
+      "file_path": "data/raw_videos/bbb_sunflower_1080p_60fps_normal.mp4"
     },
     "sintel": {
       "name": "Sintel",

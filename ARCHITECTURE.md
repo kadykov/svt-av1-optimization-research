@@ -26,12 +26,79 @@
 3. **Verification**: Checksums enable reproducibility across systems
 4. **Precision**: No "expected" sizes vs "actual" sizes - just reality
 
+## Git Tracking Strategy
+
+### What Gets Committed
+
+**Code and Configuration:**
+- All Python scripts (`scripts/*.py`)
+- Study configurations (`config/studies/*.json`)
+- Video source configuration (`config/video_sources.json`)
+- Schema files (`.schema.json`)
+- Documentation (`README.md`, `ARCHITECTURE.md`, `OVERVIEW.md`)
+- `requirements.txt`, `justfile`, `.gitignore`
+
+**Verification Data:**
+- `data/raw_videos/download_metadata.json` - SHA256 checksums for reproducibility
+
+### What Stays Local (NOT Committed)
+
+**Generated Data:**
+- Video files (raw, clips, encoded) - Too large, reproducible via download/extraction
+- `data/test_clips/clip_metadata.json` - Generated per extraction, reproducible via seed
+- `data/encoded/*/encoding_metadata.json` - Generated per study run
+- Analysis results - Generated from encodings
+
+**Rationale:**
+1. **Reproducibility via process, not artifacts:**
+   - Video sources documented with URLs + checksums
+   - Clip extraction reproducible with `--seed` parameter
+   - Encoding reproducible with study configs
+   - Analysis reproducible from encoding metadata
+
+2. **Size concerns:**
+   - Video files can be GBs
+   - Encoded results multiply quickly (100s of GB)
+   - Git LFS would be required, adds complexity
+
+3. **Research methodology:**
+   - Focus is on the *process* and *code*, not specific results
+   - Similar to ML research: commit code/config, not trained models
+   - Results are observations from running the process
+
+### GitHub Actions + GitHub Pages Architecture
+
+**Planned workflow:**
+1. **Repo contains:** Code, configs, methodology
+2. **GitHub Action runs:** Full analysis pipeline on schedule or trigger
+3. **Action uses cache:** Store encoded videos between runs (keyed by study config hash)
+4. **Results published:** GitHub Pages hosts analysis visualizations
+5. **Local development:** Users can run same pipeline locally with own videos
+
+**Benefits:**
+- Reproducible public results without committing GBs
+- Cache prevents re-encoding on every analysis tweak
+- Users can verify/extend with own data
+- Clear separation: code (git) vs results (GitHub Pages)
+
+**Cache strategy:**
+```yaml
+# Pseudocode for GitHub Actions
+cache_key = hash(study_config + clip_metadata + encoder_version)
+if cache_hit:
+  skip_encoding()
+else:
+  run_encoding()
+  save_to_cache()
+```
+
 ## File Organization
 
 ### Git Tracking
 
 **Committed to git:**
 - `config/video_sources.json` - Source configuration
+- `config/studies/*.json` - Study configurations
 - `data/raw_videos/download_metadata.json` - Checksums for verification
 - All Python scripts
 - `requirements.txt`
@@ -39,9 +106,11 @@
 
 **NOT committed (in .gitignore):**
 - Video files (*.mp4, *.mkv, etc.) - Too large
-- Encoded videos - Generated outputs
+- Encoded videos (`data/encoded/*/`) - Generated outputs
 - `data/test_clips/clip_metadata.json` - Generated per extraction
+- Encoding metadata (`data/encoded/*/encoding_metadata.json`) - Generated per study
 - Python venv - Reproducible via requirements.txt
+- Analysis results - Published to GitHub Pages instead
 
 ### Directory Structure
 
@@ -99,6 +168,33 @@ Videos in `.zip` archives are automatically extracted during download:
 5. Calculate checksum of extracted video
 
 This keeps the data directory clean - only actual video files, no archives.
+
+## Encoding Studies Strategy
+
+**Study-based approach instead of exhaustive sweep:**
+- Avoids combinatorial explosion of parameters
+- Each study focuses on specific hypothesis
+- Reuses existing clip filtering (no duplicate logic)
+- Extract different clip sets for different studies
+
+**Study configuration:**
+- JSON files in `config/studies/`
+- Parameters can be single values or arrays (auto-sweep)
+- Cartesian product generates all combinations
+- Only preset and CRF required (rest optional)
+
+**Output organization:**
+- `data/encoded/{study_name}/` per study
+- Filename format: `{clip}_p{preset}_crf{crf}[_fg{grain}]...mkv`
+- `encoding_metadata.json` tracks all results
+- System info included for reproducibility
+
+**Why separate studies:**
+1. Baseline sweep focuses on preset/CRF only
+2. Film grain study uses fixed preset/CRF, varies grain
+3. Each study answers specific question
+4. Avoids re-encoding entire collection for each parameter
+5. Analysis scripts can be study-specific
 
 ## Requirements Management
 

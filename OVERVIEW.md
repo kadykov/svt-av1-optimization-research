@@ -21,16 +21,16 @@ Find optimal SVT-AV1 encoding parameters that balance:
 - Filter by category, resolution, FPS
 - Duration range testing (codec efficiency analysis)
 
-### Phase 3: Encoding Tests
-- Systematic parameter sweep:
-  - Preset (0-13, speed vs quality)
-  - CRF (Constant Rate Factor)
-  - Film grain synthesis
-  - Quantization parameters
-  - Tile configuration
-  - etc.
-- Encode each clip with each parameter combination
+### Phase 3: Encoding Tests ✅ (Current)
+- Study-based approach for focused parameter sweeps
+- Baseline study: preset (4-10) × CRF (20-40)
+- Specialized studies:
+  - Film grain synthesis levels
+  - Screen content modes
+  - Tuning modes (VQ/PSNR/SSIM)
+  - Tile configurations (future)
 - Track encoding time and system resources
+- SHA256 checksums for reproducibility
 
 ### Phase 4: Quality Metrics
 - Calculate objective metrics:

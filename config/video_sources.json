@@ -2,9 +2,9 @@
   "comment": "Small starter dataset for initial development. Only essential metadata here - detailed info is in download_metadata.json after fetching.",
   "sources": [
     {
-      "id": "bbb_4k",
-      "name": "Big Buck Bunny - 4K 60fps",
-      "url": "https://download.blender.org/demo/movies/BBB/bbb_sunflower_2160p_60fps_normal.mp4.zip",
+      "id": "bbb_1080p60",
+      "name": "Big Buck Bunny - 1080p 60fps",
+      "url": "https://download.blender.org/demo/movies/BBB/bbb_sunflower_1080p_60fps_normal.mp4.zip",
       "categories": ["3d_animation", "high_motion", "colorful"],
       "license": "CC-BY-3.0"
     },

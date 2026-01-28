@@ -1,0 +1,199 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Encoding Study Results Metadata",
+  "description": "Machine-generated metadata tracking encoding results for a study. Records all encodings with timing, resource usage, and output file information.",
+  "type": "object",
+  "required": ["study_config", "system_info", "start_time", "encodings"],
+  "properties": {
+    "study_config": {
+      "type": "object",
+      "description": "Copy of the study configuration used",
+      "required": ["study_name", "description", "parameters"],
+      "properties": {
+        "study_name": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "parameters": {
+          "type": "object"
+        },
+        "clips_dir": {
+          "type": "string"
+        },
+        "output_dir": {
+          "type": "string"
+        }
+      }
+    },
+    "system_info": {
+      "type": "object",
+      "description": "System information for reproducibility",
+      "required": ["cpu", "memory_gb", "os", "svt_av1_version"],
+      "properties": {
+        "cpu": {
+          "type": "string",
+          "description": "CPU model name"
+        },
+        "cpu_cores": {
+          "type": "integer",
+          "description": "Number of CPU cores"
+        },
+        "memory_gb": {
+          "type": "number",
+          "description": "Total system memory in GB"
+        },
+        "os": {
+          "type": "string",
+          "description": "Operating system"
+        },
+        "svt_av1_version": {
+          "type": "string",
+          "description": "SVT-AV1 encoder version"
+        },
+        "ffmpeg_version": {
+          "type": "string",
+          "description": "FFmpeg version"
+        }
+      }
+    },
+    "start_time": {
+      "type": "string",
+      "description": "ISO 8601 timestamp when encoding study started",
+      "format": "date-time"
+    },
+    "end_time": {
+      "type": ["string", "null"],
+      "description": "ISO 8601 timestamp when encoding study completed (null if in progress)",
+      "format": "date-time"
+    },
+    "encodings": {
+      "type": "array",
+      "description": "List of all encodings performed in this study",
+      "items": {
+        "type": "object",
+        "required": ["output_file", "source_clip", "parameters", "encoding_time_seconds", "file_size_bytes", "sha256"],
+        "properties": {
+          "output_file": {
+            "type": "string",
+            "description": "Filename of encoded output"
+          },
+          "source_clip": {
+            "type": "string",
+            "description": "Source clip filename"
+          },
+          "parameters": {
+            "type": "object",
+            "description": "Exact parameters used for this encoding",
+            "required": ["preset", "crf"],
+            "properties": {
+              "preset": {
+                "type": "integer"
+              },
+              "crf": {
+                "type": "integer"
+              },
+              "film_grain": {
+                "type": ["integer", "null"]
+              },
+              "film_grain_denoise": {
+                "type": ["integer", "null"]
+              },
+              "scm": {
+                "type": ["integer", "null"]
+              },
+              "tune": {
+                "type": ["integer", "null"]
+              },
+              "tile_rows": {
+                "type": ["integer", "null"]
+              },
+              "tile_columns": {
+                "type": ["integer", "null"]
+              },
+              "enable_qm": {
+                "type": ["integer", "null"]
+              }
+            }
+          },
+          "encoding_time_seconds": {
+            "type": "number",
+            "description": "Wall clock time for encoding (seconds)",
+            "minimum": 0
+          },
+          "cpu_time_seconds": {
+            "type": ["number", "null"],
+            "description": "CPU time used (seconds, null if unavailable)",
+            "minimum": 0
+          },
+          "peak_memory_mb": {
+            "type": ["number", "null"],
+            "description": "Peak memory usage in MB (null if unavailable)",
+            "minimum": 0
+          },
+          "file_size_bytes": {
+            "type": "integer",
+            "description": "Output file size in bytes",
+            "minimum": 0
+          },
+          "sha256": {
+            "type": "string",
+            "description": "SHA256 checksum of output file",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "fps": {
+            "type": ["number", "null"],
+            "description": "Encoding speed in frames per second (from encoder output)",
+            "minimum": 0
+          },
+          "bitrate_kbps": {
+            "type": ["number", "null"],
+            "description": "Output bitrate in kbps (calculated from file size and duration)",
+            "minimum": 0
+          },
+          "timestamp": {
+            "type": "string",
+            "description": "ISO 8601 timestamp when this encoding completed",
+            "format": "date-time"
+          },
+          "success": {
+            "type": "boolean",
+            "description": "Whether encoding completed successfully"
+          },
+          "error": {
+            "type": ["string", "null"],
+            "description": "Error message if encoding failed"
+          }
+        }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "description": "Summary statistics for the study",
+      "properties": {
+        "total_encodings": {
+          "type": "integer",
+          "description": "Total number of encodings attempted"
+        },
+        "successful_encodings": {
+          "type": "integer",
+          "description": "Number of successful encodings"
+        },
+        "failed_encodings": {
+          "type": "integer",
+          "description": "Number of failed encodings"
+        },
+        "total_time_seconds": {
+          "type": "number",
+          "description": "Total wall clock time for all encodings"
+        },
+        "total_output_size_bytes": {
+          "type": "integer",
+          "description": "Total size of all output files"
+        }
+      }
+    }
+  },
+  "additionalProperties": false
+}

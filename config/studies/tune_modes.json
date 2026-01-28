@@ -1,0 +1,9 @@
+{
+  "study_name": "tune_modes",
+  "description": "Tuning mode study: compare VQ (Visual Quality), PSNR, and SSIM tuning modes. Fixed preset and CRF.",
+  "parameters": {
+    "preset": 6,
+    "crf": 28,
+    "tune": [0, 1, 2]
+  }
+}

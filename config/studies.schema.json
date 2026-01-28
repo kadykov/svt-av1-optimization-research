@@ -1,0 +1,196 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Study Configuration",
+  "description": "Configuration for an encoding study that defines parameter sweeps and encoding settings",
+  "type": "object",
+  "required": ["study_name", "description", "parameters"],
+  "properties": {
+    "study_name": {
+      "type": "string",
+      "description": "Unique identifier for this study (used in output directory naming)",
+      "pattern": "^[a-z0-9_]+$"
+    },
+    "description": {
+      "type": "string",
+      "description": "Human-readable description of the study's purpose"
+    },
+    "parameters": {
+      "type": "object",
+      "description": "SVT-AV1 encoding parameters",
+      "required": ["preset", "crf"],
+      "properties": {
+        "preset": {
+          "description": "Preset value(s) to test. Can be single value or array for sweep.",
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 13
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 13
+              },
+              "minItems": 1
+            }
+          ]
+        },
+        "crf": {
+          "description": "CRF (Constant Rate Factor) value(s) to test. Can be single value or array for sweep.",
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 63
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 63
+              },
+              "minItems": 1
+            }
+          ]
+        },
+        "film_grain": {
+          "description": "Film grain synthesis level (0-50). Omit to use encoder default (disabled).",
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 50
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 50
+              },
+              "minItems": 1
+            }
+          ]
+        },
+        "film_grain_denoise": {
+          "description": "Apply denoising with film grain synthesis (0=off, 1=on). Requires film_grain to be set.",
+          "oneOf": [
+            {
+              "type": "integer",
+              "enum": [0, 1]
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "enum": [0, 1]
+              },
+              "minItems": 1
+            }
+          ]
+        },
+        "scm": {
+          "description": "Screen content mode (0=disabled for live action, 1=screen recordings, 2=mixed content)",
+          "oneOf": [
+            {
+              "type": "integer",
+              "enum": [0, 1, 2]
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "enum": [0, 1, 2]
+              },
+              "minItems": 1
+            }
+          ]
+        },
+        "tune": {
+          "description": "Tuning mode (0=VQ/Visual Quality, 1=PSNR, 2=SSIM)",
+          "oneOf": [
+            {
+              "type": "integer",
+              "enum": [0, 1, 2]
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "enum": [0, 1, 2]
+              },
+              "minItems": 1
+            }
+          ]
+        },
+        "tile_rows": {
+          "description": "Number of tile rows for parallel encoding",
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "minItems": 1
+            }
+          ]
+        },
+        "tile_columns": {
+          "description": "Number of tile columns for parallel encoding",
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "minItems": 1
+            }
+          ]
+        },
+        "enable_qm": {
+          "description": "Enable quantization matrices (0=off, 1=on)",
+          "oneOf": [
+            {
+              "type": "integer",
+              "enum": [0, 1]
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "enum": [0, 1]
+              },
+              "minItems": 1
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "clips_dir": {
+      "type": "string",
+      "description": "Directory containing clips to encode (relative to project root). Defaults to 'data/test_clips'.",
+      "default": "data/test_clips"
+    },
+    "output_dir": {
+      "type": "string",
+      "description": "Output directory for encoded files (relative to data/encoded/). Defaults to study_name.",
+      "default": null
+    }
+  },
+  "additionalProperties": false
+}

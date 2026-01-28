@@ -1,0 +1,10 @@
+{
+  "study_name": "film_grain",
+  "description": "Film grain synthesis study: test impact of film grain synthesis on encoding efficiency for grainy content. Fixed preset and CRF, sweep film grain levels.",
+  "parameters": {
+    "preset": 6,
+    "crf": 28,
+    "film_grain": [0, 8, 12, 16, 20, 25],
+    "film_grain_denoise": [0, 1]
+  }
+}

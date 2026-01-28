@@ -6,26 +6,23 @@ __pycache__/
 venv/
 .Python
 
-# Video files (large, should not be committed)
-data/raw_videos/*.mp4
-data/raw_videos/*.mkv
-data/raw_videos/*.webm
-data/raw_videos/*.mov
-data/raw_videos/*.avi
-data/raw_videos/*.zip
-data/test_clips/*.mp4
-data/test_clips/*.mkv
-data/test_clips/*.webm
-data/encoded/*.mp4
-data/encoded/*.mkv
-data/encoded/*.webm
-data/encoded/*.av1
+# Video files and generated data (large, should not be committed)
+# Strategy: Ignore everything in data directories except JSON metadata/schemas
 
-# Keep metadata files (they contain checksums and should be tracked)
-!data/raw_videos/download_metadata.json
+# Raw videos (downloaded from various sources - unknown extensions)
+data/raw_videos/*
+!data/raw_videos/*.json
+!data/raw_videos/.gitkeep
 
-# Generated clip metadata (reflects current clips only, not tracked)
-data/test_clips/clip_metadata.json
+# Test clips (extracted fragments - we control format, use .mp4)
+data/test_clips/*
+!data/test_clips/*.json
+!data/test_clips/.gitkeep
+
+# Encoded videos and study results (generated, not tracked)
+data/encoded/*
+!data/encoded/*.json
+!data/encoded/.gitkeep
 
 # IDE
 .vscode/

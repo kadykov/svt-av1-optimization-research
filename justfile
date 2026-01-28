@@ -33,13 +33,31 @@ extract-category CATEGORY NUM MIN_DUR MAX_DUR *ARGS:
 extract-seeded NUM MIN_DUR MAX_DUR SEED *ARGS:
     . venv/bin/activate && python scripts/extract_clips.py --num-clips {{NUM}} --min-duration {{MIN_DUR}} --max-duration {{MAX_DUR}} --seed {{SEED}} {{ARGS}}
 
-# Clean extracted clips (keeps raw videos)
+# Encode clips according to study configuration (usage: just encode-study baseline_sweep)
+encode-study STUDY *ARGS:
+    . venv/bin/activate && python scripts/encode_study.py config/studies/{{STUDY}}.json {{ARGS}}
+
+# List available encoding studies
+list-studies:
+    @echo "Available studies:"
+    @ls -1 config/studies/*.json | xargs -n1 basename -s .json | sed 's/^/  /'
+
+# Dry run of encoding study (show what would be encoded)
+dry-run-study STUDY:
+    . venv/bin/activate && python scripts/encode_study.py config/studies/{{STUDY}}.json --dry-run
+
+# Clean extracted clips (removes videos and generated metadata, keeps schemas)
 clean-clips:
-    rm -rf data/test_clips/*.mp4 data/test_clips/*.mkv data/test_clips/*.webm data/test_clips/*.mov data/test_clips/*.avi
+    find data/test_clips -type f \( -name '*.mp4' -o -name '*.mkv' -o -name '*.webm' -o -name '*.mov' -o -name '*.avi' \) -delete
     rm -f data/test_clips/clip_metadata.json
 
-# Clean downloaded videos (CAREFUL! This deletes all video files)
+# Clean encoded videos (removes study directories, keeps schemas)
+clean-encoded:
+    find data/encoded -mindepth 1 -maxdepth 1 -type d -exec rm -rf {} +
+
+# Clean all videos (CAREFUL! Deletes raw videos, clips, and encoded results)
 clean-videos:
-    rm -rf data/raw_videos/*.mp4 data/raw_videos/*.mkv data/raw_videos/*.webm data/raw_videos/*.mov data/raw_videos/*.avi
-    rm -rf data/test_clips/*
-    rm -rf data/encoded/*
+    find data/raw_videos -type f \( -name '*.mp4' -o -name '*.mkv' -o -name '*.webm' -o -name '*.mov' -o -name '*.avi' -o -name '*.zip' \) -delete
+    rm -f data/raw_videos/download_metadata.json
+    just clean-clips
+    just clean-encoded
