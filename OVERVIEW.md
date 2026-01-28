@@ -21,7 +21,7 @@ Find optimal SVT-AV1 encoding parameters that balance:
 - Filter by category, resolution, FPS
 - Duration range testing (codec efficiency analysis)
 
-### Phase 3: Encoding Tests ✅ (Current)
+### Phase 3: Encoding Tests ✅
 - Study-based approach for focused parameter sweeps
 - Baseline study: preset (4-10) × CRF (20-40)
 - Specialized studies:
@@ -32,13 +32,23 @@ Find optimal SVT-AV1 encoding parameters that balance:
 - Track encoding time and system resources
 - SHA256 checksums for reproducibility
 
-### Phase 4: Quality Metrics
+### Phase 4: Quality Metrics ✅ (Current)
 - Calculate objective metrics:
-  - VMAF (Video Multi-method Assessment Fusion)
+  - VMAF NEG (Video Multi-method Assessment Fusion, No Enhancement Gain mode)
+    * Industry standard for codec evaluation
+    * Perceptual quality metric from Netflix
+    * Disables enhancement gain for pure codec testing
   - SSIM (Structural Similarity Index)
   - PSNR (Peak Signal-to-Noise Ratio)
-- Track file sizes
-- Compute efficiency metrics (quality per byte, quality per second)
+- Comprehensive statistics:
+  - Mean, harmonic mean (better for worst-case quality)
+  - Percentiles (1st, 5th, 25th, 50th, 75th, 95th)
+  - Min/max, standard deviation
+- Efficiency metrics:
+  - Quality per byte (VMAF per megabyte)
+  - Quality per bitrate (VMAF per kbps)
+  - Quality per encoding second (speed/quality tradeoff)
+- FFmpeg libvmaf integration (no additional dependencies)
 
 ### Phase 5: Analysis
 - Visualizations:

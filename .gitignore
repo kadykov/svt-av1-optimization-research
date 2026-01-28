@@ -21,7 +21,7 @@ data/test_clips/*
 
 # Encoded videos and study results (generated, not tracked)
 data/encoded/*
-!data/encoded/*.json
+!data/encoded/*.schema.json
 !data/encoded/.gitkeep
 
 # IDE

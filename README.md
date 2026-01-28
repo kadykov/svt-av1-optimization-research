@@ -100,6 +100,27 @@ just encode-study film_grain --continue-on-error
 just encode-study baseline_sweep -v
 ```
 
+### Quality Analysis
+```bash
+# List encoded studies ready for analysis
+just list-encoded
+
+# Analyze study (VMAF + PSNR + SSIM)
+just analyze-study baseline_sweep
+
+# Analyze with only VMAF (faster)
+just analyze-vmaf baseline_sweep
+
+# Continue despite analysis errors
+just analyze-study baseline_sweep --continue-on-error
+
+# Use more threads for faster VMAF calculation
+just analyze-study baseline_sweep --threads 8
+
+# Verbose output with FFmpeg commands
+just analyze-study baseline_sweep -v
+```
+
 ### Cleanup
 ```bash
 just clean-clips          # Remove extracted clips only
@@ -136,6 +157,16 @@ just clean-videos         # Remove all video files (raw + clips + encoded)
 - ✅ Dry-run mode to preview encodings
 - ✅ Support for all key SVT-AV1 parameters
 
+### Quality Analysis
+- ✅ VMAF (NEG mode) - Netflix's perceptual quality metric for codec evaluation
+- ✅ PSNR - Traditional pixel difference metric
+- ✅ SSIM - Structural similarity metric
+- ✅ Efficiency metrics (VMAF per kbps, quality per encoding second)
+- ✅ Comprehensive statistics (mean, harmonic mean, percentiles)
+- ✅ FFmpeg integration (no additional dependencies)
+- ✅ Multi-threaded VMAF calculation
+- ✅ Detailed analysis metadata with summary
+
 ## Metadata Design
 
 **`config/video_sources.json`** - Human-edited, minimal:
@@ -171,6 +202,17 @@ This file is NOT committed (in .gitignore) because:
 - Generated from running studies
 - Reproducible from study config + clips
 - Results will be published to GitHub Pages instead
+
+**`data/encoded/{study_name}/analysis_metadata.json`** - Machine-generated:
+- Quality metrics per encoding (VMAF, PSNR, SSIM)
+- VMAF statistics: mean, harmonic mean, percentiles, min/max
+- Efficiency metrics: quality per bitrate, quality per encoding time
+- Summary: best quality, best efficiency, metric ranges
+
+This file is NOT committed (in .gitignore) because:
+- Generated from encoded videos
+- Reproducible from encodings + source clips
+- Large file size with per-frame statistics
 
 ## Architecture Philosophy
 
@@ -215,14 +257,15 @@ Studies are focused parameter sweeps stored in `config/studies/`:
 1. Extract clips with appropriate filters: `just extract-category 3d_animation 5 20 30`
 2. Preview study: `just dry-run-study film_grain`
 3. Run encoding: `just encode-study film_grain`
-4. Analyze results using `data/encoded/film_grain/encoding_metadata.json`
+4. Analyze quality: `just analyze-study film_grain`
+5. Review results: `data/encoded/film_grain/analysis_metadata.json`
 
 ## Development Workflow
 
 1. ✅ Small dataset
 2. ✅ Clip extraction script
-3. ✅ Encoding pipeline with study system (current)
-4. Add quality metrics (VMAF, SSIM, PSNR)
+3. ✅ Encoding pipeline with study system
+4. ✅ Quality metrics (VMAF, PSNR, SSIM) (current)
 5. Analysis and visualization
 6. Expand dataset
 7. Full parameter sweep
@@ -231,6 +274,6 @@ Studies are focused parameter sweeps stored in `config/studies/`:
 
 - [x] ✅ Extract short clips from videos
 - [x] ✅ Implement encoding with parameter sweep
-- [ ] Calculate quality metrics
+- [x] ✅ Calculate quality metrics (VMAF NEG, PSNR, SSIM)
 - [ ] Create analysis visualizations
 - [ ] Expand video collection

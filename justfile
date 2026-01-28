@@ -1,4 +1,10 @@
-# Create virtual environment and install Python dependencies
+# Justfile for managing video dataset preparation, encoding studies, and analysis
+
+# Default recipe: show all available commands
+default:
+    @just --list
+
+# Create virtual environment and install Python dependencies  
 install:
     python3 -m venv venv
     . venv/bin/activate && pip install --upgrade pip
@@ -45,6 +51,19 @@ list-studies:
 # Dry run of encoding study (show what would be encoded)
 dry-run-study STUDY:
     . venv/bin/activate && python scripts/encode_study.py config/studies/{{STUDY}}.json --dry-run
+
+# Analyze encoded videos (calculate VMAF, PSNR, SSIM)
+analyze-study STUDY *ARGS:
+    . venv/bin/activate && python scripts/analyze_study.py {{STUDY}} {{ARGS}}
+
+# Analyze with only VMAF (faster)
+analyze-vmaf STUDY *ARGS:
+    . venv/bin/activate && python scripts/analyze_study.py {{STUDY}} --metrics vmaf {{ARGS}}
+
+# List studies that have been encoded and are ready for analysis
+list-encoded:
+    @echo "Encoded studies ready for analysis:"
+    @find data/encoded -mindepth 1 -maxdepth 1 -type d -exec test -f {}/encoding_metadata.json \; -printf "  %f\n" 2>/dev/null || echo "  (none)"
 
 # Clean extracted clips (removes videos and generated metadata, keeps schemas)
 clean-clips:
