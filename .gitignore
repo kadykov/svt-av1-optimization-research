@@ -5,6 +5,9 @@ __pycache__/
 *.so
 venv/
 .Python
+*.egg-info/
+dist/
+build/
 
 # Video files and generated data (large, should not be committed)
 # Strategy: Ignore everything in data directories except JSON metadata/schemas
@@ -16,8 +19,9 @@ data/raw_videos/*
 
 # Test clips (extracted fragments - we control format, use .mp4)
 data/test_clips/*
-!data/test_clips/*.json
+!data/test_clips/*.schema.json
 !data/test_clips/.gitkeep
+# Note: clip_metadata.json is generated randomly and should not be tracked
 
 # Encoded videos and study results (generated, not tracked)
 data/encoded/*
@@ -171,14 +175,27 @@ cython_debug/
 .abstra/
 
 # Visual Studio Code
-#  Visual Studio Code specific template is maintained in a separate VisualStudioCode.gitignore 
+#  Visual Studio Code specific template is maintained in a separate VisualStudioCode.gitignore
 #  that can be found at https://github.com/github/gitignore/blob/main/Global/VisualStudioCode.gitignore
-#  and can be added to the global gitignore or merged into this file. However, if you prefer, 
+#  and can be added to the global gitignore or merged into this file. However, if you prefer,
 #  you could uncomment the following to ignore the entire vscode folder
 # .vscode/
 
 # Ruff stuff:
 .ruff_cache/
+
+# Test coverage reports
+htmlcov/
+.coverage
+coverage.json
+.pytest_cache/
+
+# Test fixtures - encoded outputs (generated during tests)
+tests/fixtures/*.ivf
+tests/fixtures/output_*
+
+# Note: Small test video fixtures (< 500KB) SHOULD be committed
+# They are essential for integration tests
 
 # PyPI configuration file
 .pypirc

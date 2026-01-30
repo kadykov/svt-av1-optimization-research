@@ -4,11 +4,63 @@
 default:
     @just --list
 
-# Create virtual environment and install Python dependencies  
+# Create virtual environment and install Python dependencies
 install:
     python3 -m venv venv
     . venv/bin/activate && pip install --upgrade pip
-    . venv/bin/activate && pip install -r requirements.txt
+    . venv/bin/activate && pip install -e .
+
+# Install development dependencies (linting, testing, type checking)
+install-dev:
+    @if [ -d "venv" ]; then \
+        . venv/bin/activate && pip install -e ".[dev]" && pre-commit install; \
+    else \
+        pip install -e ".[dev]" && pre-commit install; \
+    fi
+
+# Lint and auto-fix code with ruff
+lint:
+    . venv/bin/activate && ruff check scripts/ tests/ --fix
+
+# Format code with ruff
+format:
+    . venv/bin/activate && ruff format scripts/ tests/
+
+# Check code formatting without modifying
+format-check:
+    . venv/bin/activate && ruff format --check scripts/ tests/
+
+# Type check with mypy
+type-check:
+    . venv/bin/activate && mypy scripts/ tests/
+
+# Run all tests
+test:
+    . venv/bin/activate && pytest tests/ -v
+
+# Run only unit tests (fast)
+test-unit:
+    . venv/bin/activate && pytest tests/unit/ -v
+
+# Run only integration tests
+test-integration:
+    . venv/bin/activate && pytest tests/integration/ -v
+
+# Run tests with coverage report
+test-coverage:
+    . venv/bin/activate && pytest tests/ -v --cov=scripts --cov-report=html --cov-report=term
+
+# Run all code quality checks (lint, format-check, type-check, test)
+check-all:
+    @echo "🔍 Running linter..."
+    @just lint
+    @echo "\n📐 Checking formatting..."
+    @just format-check
+    @echo "\n🔎 Type checking..."
+    @just type-check
+    @echo "\n🧪 Running tests..."
+    @just test
+    @echo "\n✅ All checks passed!"
 
 # List all available video sources
 list-videos:

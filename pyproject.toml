@@ -1,0 +1,234 @@
+[project]
+name = "svt-av1-optimization-research"
+version = "0.1.0"
+description = "Research project for determining optimal AV1 encoding parameters using SVT-AV1"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+authors = [
+    {name = "SVT-AV1 Optimization Research Team"}
+]
+
+dependencies = [
+    "requests>=2.31.0",
+    "tqdm>=4.66.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.8.0",
+    "mypy>=1.11.0",
+    "pytest>=8.3.0",
+    "pytest-cov>=6.0.0",
+    "pytest-timeout>=2.3.0",
+    "pre-commit>=4.0.0",
+    "types-requests>=2.31.0",
+]
+
+analysis = [
+    "pandas>=2.0.0",
+    "numpy>=1.24.0",
+    "matplotlib>=3.7.0",
+    "seaborn>=0.12.0",
+]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+# ============================================================================
+# Setuptools Configuration
+# ============================================================================
+# This is a scripts/research project, not a distributable package.
+# We explicitly set packages to empty to avoid setuptools auto-discovery
+# which fails when it finds multiple top-level directories (data, config, etc.)
+[tool.setuptools]
+packages = []
+
+# ============================================================================
+# Ruff Configuration
+# ============================================================================
+[tool.ruff]
+# Python 3.12+ compatibility
+target-version = "py312"
+
+# File paths to include/exclude
+include = ["scripts/**/*.py", "tests/**/*.py"]
+exclude = [
+    ".git",
+    ".venv",
+    "venv",
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    "data/",
+    "results/",
+]
+
+# Line length to match common Python style
+line-length = 100
+
+# Enable auto-fixing when possible
+fix = true
+
+[tool.ruff.lint]
+# Enable comprehensive linting rules
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # Pyflakes
+    "I",      # isort (import sorting)
+    "N",      # pep8-naming
+    "UP",     # pyupgrade (modern Python syntax)
+    "B",      # flake8-bugbear
+    "C4",     # flake8-comprehensions
+    "DTZ",    # flake8-datetimez (timezone-aware datetime)
+    "T10",    # flake8-debugger
+    "EM",     # flake8-errmsg
+    "ISC",    # flake8-implicit-str-concat
+    "ICN",    # flake8-import-conventions
+    "PIE",    # flake8-pie
+    "PT",     # flake8-pytest-style
+    "Q",      # flake8-quotes
+    "RSE",    # flake8-raise
+    "RET",    # flake8-return
+    "SIM",    # flake8-simplify
+    "PTH",    # flake8-use-pathlib
+    "PL",     # Pylint
+    "PERF",   # Perflint (performance)
+    "RUF",    # Ruff-specific rules
+]
+
+# Disable specific rules that don't fit this project
+ignore = [
+    "E501",    # Line too long (handled by formatter)
+    "PLR0913", # Too many arguments (common in CLI tools)
+    "PLR2004", # Magic value comparison (acceptable for constants)
+    "PLR0911", # Too many return statements (acceptable for CLI main functions)
+    "PLR0912", # Too many branches (acceptable for CLI main functions)
+    "PLR0915", # Too many statements (acceptable for CLI main functions)
+    "PLW1510", # subprocess.run without check (we handle return codes manually)
+    "PTH123",  # open() instead of Path.open() (preference)
+    "EM101",   # Exception string literals (acceptable for clarity)
+    "EM102",   # Exception f-strings (acceptable for clarity)
+    "RET504",  # Unnecessary variable assignment (readability)
+    "SIM108",  # Use ternary (not always more readable)
+    "DTZ005",  # datetime.now() without tz (we use timezone.utc)
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Allow print statements in scripts (CLI output is intentional)
+"scripts/*.py" = ["T201"]
+# Allow assert statements and local imports in tests
+"tests/**/*.py" = ["S101", "PLR2004", "PLC0415"]
+
+[tool.ruff.lint.isort]
+# Import sorting configuration
+known-first-party = ["scripts"]
+force-single-line = false
+lines-after-imports = 2
+
+[tool.ruff.format]
+# Use double quotes for strings
+quote-style = "double"
+# Use spaces for indentation
+indent-style = "space"
+# Unix line endings
+line-ending = "lf"
+# Add trailing commas to multiline structures
+skip-magic-trailing-comma = false
+
+# ============================================================================
+# Mypy Configuration
+# ============================================================================
+[tool.mypy]
+# Python version target
+python_version = "3.12"
+
+# Files to check
+files = ["scripts/", "tests/"]
+exclude = [
+    "venv",
+    "\\.venv",
+    "data",
+    "results",
+]
+
+# Skip type checking third-party modules
+follow_imports = "skip"
+follow_imports_for_stubs = true
+
+# Strict mode options (gradually enable as codebase improves)
+strict = false
+warn_return_any = true
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+check_untyped_defs = true
+disallow_untyped_defs = false  # Set to true once all functions are typed
+disallow_any_unimported = false
+no_implicit_optional = true
+strict_equality = true
+
+# Allow incremental type checking
+incremental = true
+cache_dir = ".mypy_cache"
+
+# Show error codes and context
+show_error_codes = true
+show_column_numbers = true
+show_error_context = true
+pretty = true
+
+# Allow untyped calls to third-party libraries
+ignore_missing_imports = true
+
+# ============================================================================
+# Pytest Configuration
+# ============================================================================
+[tool.pytest.ini_options]
+# Test discovery patterns
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+
+# Output options
+addopts = [
+    "-v",                          # Verbose output
+    "--strict-markers",            # Enforce marker registration
+    "--tb=short",                  # Shorter traceback format
+]
+
+# Markers for categorizing tests
+markers = [
+    "integration: Integration tests that use real tools (FFmpeg, etc.)",
+    "unit: Fast unit tests without external dependencies",
+    "slow: Tests that take more than 10 seconds",
+    "requires_ffmpeg: Tests that require FFmpeg installation",
+    "requires_vmaf: Tests that require VMAF model files",
+]
+
+# Minimum coverage requirement (start low, increase gradually)
+[tool.coverage.run]
+branch = true
+source = ["scripts"]
+omit = [
+    "*/tests/*",
+    "*/__pycache__/*",
+    "*/venv/*",
+    "*/.venv/*",
+]
+
+[tool.coverage.report]
+precision = 2
+show_missing = true
+skip_covered = false
+# Target 60% coverage initially (increase to 70%+ over time)
+fail_under = 0
+
+[tool.coverage.html]
+directory = "htmlcov"

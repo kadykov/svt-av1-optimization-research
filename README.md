@@ -260,20 +260,30 @@ Studies are focused parameter sweeps stored in `config/studies/`:
 4. Analyze quality: `just analyze-study film_grain`
 5. Review results: `data/encoded/film_grain/analysis_metadata.json`
 
-## Development Workflow
+## Documentation
 
-1. ✅ Small dataset
-2. ✅ Clip extraction script
-3. ✅ Encoding pipeline with study system
-4. ✅ Quality metrics (VMAF, PSNR, SSIM) (current)
-5. Analysis and visualization
-6. Expand dataset
-7. Full parameter sweep
+- **[CONTRIBUTING.md](CONTRIBUTING.md)** - Development guide, code style, testing
+- **[ARCHITECTURE.md](ARCHITECTURE.md)** - Design decisions and data flow architecture
+- **[OVERVIEW.md](OVERVIEW.md)** - Research methodology, goals, and hypotheses
+- **[docs/ANALYSIS_GUIDE.md](docs/ANALYSIS_GUIDE.md)** - Quality metrics system (VMAF, PSNR, SSIM)
+- **[docs/VMAF_NOTES.md](docs/VMAF_NOTES.md)** - Why we use VMAF NEG mode for codec evaluation
+- **[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)** - Common issues and solutions
 
-## Next Steps
+## Development
 
-- [x] ✅ Extract short clips from videos
-- [x] ✅ Implement encoding with parameter sweep
-- [x] ✅ Calculate quality metrics (VMAF NEG, PSNR, SSIM)
-- [ ] Create analysis visualizations
-- [ ] Expand video collection
+Want to contribute? See [CONTRIBUTING.md](CONTRIBUTING.md) for:
+- Development environment setup
+- Code quality tools (Ruff, Mypy, Pytest)
+- Testing guidelines
+- Code style conventions
+- Common development tasks
+
+## Project Status
+
+- ✅ Video download system with metadata tracking
+- ✅ Clip extraction with filtering and reproducibility
+- ✅ Study-based encoding framework
+- ✅ Quality metrics calculation (VMAF NEG, PSNR, SSIM)
+- ✅ Comprehensive test coverage and CI/CD
+- 🚧 Analysis visualizations (in progress)
+- 📋 Dataset expansion (planned)

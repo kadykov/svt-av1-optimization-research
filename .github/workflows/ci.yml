@@ -1,0 +1,164 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:  # Allow manual triggers
+
+jobs:
+  # Code quality checks
+  lint:
+    name: Lint and Format Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff
+
+      - name: Run ruff linter
+        run: ruff check scripts/ tests/
+
+      - name: Run ruff formatter check
+        run: ruff format --check scripts/ tests/
+
+  # Type checking
+  typecheck:
+    name: Type Check with mypy
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install mypy types-requests
+          pip install -r requirements.txt
+
+      - name: Run mypy
+        run: mypy scripts/ tests/
+        continue-on-error: true  # Don't fail build on type errors initially
+
+  # Tests (unit and integration)
+  tests:
+    name: Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: 'pip'
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Generate test video fixture
+        run: |
+          mkdir -p tests/fixtures
+          ffmpeg -f lavfi -i testsrc=duration=3:size=640x480:rate=24 \
+                 -f lavfi -i sine=frequency=1000:duration=3 \
+                 -c:v libx264 -preset ultrafast -crf 23 \
+                 -c:a aac -b:a 128k \
+                 tests/fixtures/test_video.mp4
+
+      - name: Run tests
+        run: |
+          pytest tests/ -v --tb=short
+
+  # Security checks
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install bandit
+        run: pip install bandit[toml]
+
+      - name: Run bandit security scan
+        run: bandit -r scripts/ -f json -o bandit-report.json
+        continue-on-error: true
+
+      - name: Upload bandit report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bandit-report
+          path: bandit-report.json
+
+  # Dependency check
+  dependencies:
+    name: Check Dependencies
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pip-audit
+          pip install -r requirements.txt
+
+      - name: Run pip-audit
+        run: pip-audit --desc
+        continue-on-error: true  # Don't fail on known vulnerabilities initially
+
+  # Summary job
+  ci-success:
+    name: CI Success
+    needs: [lint, typecheck, tests]
+    runs-on: ubuntu-latest
+    if: always()
+
+    steps:
+      - name: Check all jobs
+        run: |
+          if [ "${{ needs.lint.result }}" != "success" ] || \
+             [ "${{ needs.typecheck.result }}" != "success" ] || \
+             [ "${{ needs.tests.result }}" != "success" ]; then
+            echo "One or more jobs failed"
+            exit 1
+          fi
+          echo "All CI checks passed!"
