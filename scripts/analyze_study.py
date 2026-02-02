@@ -63,6 +63,25 @@ def find_source_clip(clip_name: str, clips_dir: Path) -> Path | None:
     return None
 
 
+def get_video_duration(video_path: Path) -> float | None:
+    """Get video duration in seconds using FFprobe."""
+    try:
+        cmd = [
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            str(video_path),
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        return float(result.stdout.strip())
+    except (subprocess.CalledProcessError, ValueError):
+        return None
+
+
 def calculate_vmaf(
     reference: Path,
     distorted: Path,
@@ -345,6 +364,47 @@ def analyze_encoding(
             "error": f"Encoded file not found: {encoded_file}",
         }
 
+    # Validate that source and encoded files have compatible durations
+    source_duration = get_video_duration(source_clip)
+    encoded_duration = get_video_duration(encoded_file)
+
+    if source_duration is None:
+        return {
+            "output_file": output_file,
+            "source_clip": source_clip_name,
+            "parameters": encoding["parameters"],
+            "metrics": {},
+            "file_size_bytes": encoding["file_size_bytes"],
+            "bitrate_kbps": encoding.get("bitrate_kbps"),
+            "success": False,
+            "error": f"Could not determine source clip duration: {source_clip.name}",
+        }
+
+    if encoded_duration is None:
+        return {
+            "output_file": output_file,
+            "source_clip": source_clip_name,
+            "parameters": encoding["parameters"],
+            "metrics": {},
+            "file_size_bytes": encoding["file_size_bytes"],
+            "bitrate_kbps": encoding.get("bitrate_kbps"),
+            "success": False,
+            "error": f"Could not determine encoded file duration: {output_file}",
+        }
+
+    # Check for duration mismatch (allow 1% tolerance for codec overhead)
+    duration_tolerance = 1.0  # 1 second tolerance
+    if abs(source_duration - encoded_duration) > duration_tolerance:
+        print(
+            f"  ⚠️  Duration mismatch detected:"
+            f" source={source_duration:.3f}s, encoded={encoded_duration:.3f}s"
+        )
+        if source_duration > encoded_duration:
+            print(
+                "  ⚠️  Encoded file is shorter than source. "
+                "This may indicate incorrect clip extraction or encoding."
+            )
+
     start_time = time.time()
 
     # Calculate metrics
@@ -356,6 +416,8 @@ def analyze_encoding(
         "file_size_bytes": encoding["file_size_bytes"],
         "bitrate_kbps": encoding.get("bitrate_kbps"),
         "duration_seconds": encoding.get("duration_seconds"),
+        "source_duration_seconds": source_duration,
+        "encoded_duration_seconds": encoded_duration,
         "encoding_time_seconds": encoding.get("encoding_time_seconds"),
         "encoding_fps": encoding.get("fps"),
         "success": True,

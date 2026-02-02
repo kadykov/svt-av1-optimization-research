@@ -307,9 +307,18 @@ def plot_clip_comparison(df: pd.DataFrame, output_dir: Path, study_name: str) ->
         for preset in sorted(df["preset"].unique()):
             subset = df[(df["source_clip"] == clip) & (df["preset"] == preset)]
             if not subset.empty:
+                # Keep clip identifier unique by preserving clip number
+                clip_name = clip.replace(".mp4", "").replace(".mkv", "")
+                # Shorten long names but keep the clip number
+                if len(clip_name) > 25:
+                    parts = clip_name.split("_clip_")
+                    if len(parts) == 2:
+                        clip_name = f"{parts[0][:15]}_c{parts[1]}"
+                    else:
+                        clip_name = clip_name[:25]
                 clip_data.append(
                     {
-                        "clip": clip.split("_clip_")[0][:20],  # Shorten name
+                        "clip": clip_name,
                         "preset": f"P{preset}",
                         "vmaf_mean": subset["vmaf_mean"].mean(),
                     }
@@ -332,9 +341,18 @@ def plot_clip_comparison(df: pd.DataFrame, output_dir: Path, study_name: str) ->
         for preset in sorted(df["preset"].unique()):
             subset = df[(df["source_clip"] == clip) & (df["preset"] == preset)]
             if not subset.empty:
+                # Keep clip identifier unique by preserving clip number
+                clip_name = clip.replace(".mp4", "").replace(".mkv", "")
+                # Shorten long names but keep the clip number
+                if len(clip_name) > 25:
+                    parts = clip_name.split("_clip_")
+                    if len(parts) == 2:
+                        clip_name = f"{parts[0][:15]}_c{parts[1]}"
+                    else:
+                        clip_name = clip_name[:25]
                 clip_size_data.append(
                     {
-                        "clip": clip.split("_clip_")[0][:20],
+                        "clip": clip_name,
                         "preset": f"P{preset}",
                         "file_size_mb": subset["file_size_mb"].mean(),
                     }

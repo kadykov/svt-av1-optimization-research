@@ -378,6 +378,10 @@ Examples:
 
         print(f"     ✅ Extracted: {file_size / 1024 / 1024:.2f} MB")
 
+        # Get actual duration of extracted clip (FFmpeg may extract slightly different duration)
+        actual_info = get_video_info(output_path)
+        actual_duration = actual_info["duration"] if actual_info else spec["duration"]
+
         # Store metadata
         clip_metadata.append(
             {
@@ -385,6 +389,7 @@ Examples:
                 "video_id": spec["video_id"],
                 "start_time": spec["start_time"],
                 "duration": spec["duration"],
+                "actual_duration": actual_duration,
                 "source_width": spec["source_width"],
                 "source_height": spec["source_height"],
                 "source_fps": spec["source_fps"],
