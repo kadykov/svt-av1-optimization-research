@@ -121,10 +121,33 @@ just analyze-study baseline_sweep --threads 8
 just analyze-study baseline_sweep -v
 ```
 
+### Visualization & Results
+```bash
+# Generate all plots and CSV for a study
+just visualize-study baseline_sweep
+
+# Visualize with custom output directory
+just visualize-to baseline_sweep custom_output/
+
+# Generate only specific plot types
+just visualize-plots baseline_sweep rate-distortion speed-quality
+
+# Clean analysis results (plots, CSVs)
+just clean-results
+```
+
+**Available plot types:**
+- `rate-distortion`: VMAF vs bitrate/file size curves
+- `speed-quality`: Encoding time vs quality tradeoffs
+- `parameter-impact`: Heatmaps showing preset/CRF effects
+- `clip-comparison`: Per-clip quality differences
+- `vmaf-distribution`: Quality consistency analysis
+
 ### Cleanup
 ```bash
 just clean-clips          # Remove extracted clips only
 just clean-encoded        # Remove encoded videos (keeps raw + clips)
+just clean-results        # Remove analysis results (plots, CSVs)
 just clean-videos         # Remove all video files (raw + clips + encoded)
 ```
 
@@ -265,7 +288,9 @@ Studies are focused parameter sweeps stored in `config/studies/`:
 - **[CONTRIBUTING.md](CONTRIBUTING.md)** - Development guide, code style, testing
 - **[ARCHITECTURE.md](ARCHITECTURE.md)** - Design decisions and data flow architecture
 - **[OVERVIEW.md](OVERVIEW.md)** - Research methodology, goals, and hypotheses
+- **[docs/WORKFLOW_EXAMPLE.md](docs/WORKFLOW_EXAMPLE.md)** - Complete end-to-end workflow example
 - **[docs/ANALYSIS_GUIDE.md](docs/ANALYSIS_GUIDE.md)** - Quality metrics system (VMAF, PSNR, SSIM)
+- **[docs/VISUALIZATION_GUIDE.md](docs/VISUALIZATION_GUIDE.md)** - Analysis and plotting system
 - **[docs/VMAF_NOTES.md](docs/VMAF_NOTES.md)** - Why we use VMAF NEG mode for codec evaluation
 - **[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)** - Common issues and solutions
 
@@ -285,5 +310,6 @@ Want to contribute? See [CONTRIBUTING.md](CONTRIBUTING.md) for:
 - ✅ Study-based encoding framework
 - ✅ Quality metrics calculation (VMAF NEG, PSNR, SSIM)
 - ✅ Comprehensive test coverage and CI/CD
-- 🚧 Analysis visualizations (in progress)
+- ✅ Analysis visualizations (rate-distortion curves, efficiency plots)
 - 📋 Dataset expansion (planned)
+- 📋 Interactive HTML reports (planned)

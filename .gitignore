@@ -28,6 +28,10 @@ data/encoded/*
 !data/encoded/*.schema.json
 !data/encoded/.gitkeep
 
+# Analysis results (plots, CSVs, reports - generated, not tracked)
+results/*
+!results/.gitkeep
+
 # IDE
 .vscode/
 .idea/

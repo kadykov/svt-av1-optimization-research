@@ -117,6 +117,18 @@ list-encoded:
     @echo "Encoded studies ready for analysis:"
     @find data/encoded -mindepth 1 -maxdepth 1 -type d -exec test -f {}/encoding_metadata.json \; -printf "  %f\n" 2>/dev/null || echo "  (none)"
 
+# Visualize study results (generate plots and CSV)
+visualize-study STUDY *ARGS:
+    . venv/bin/activate && python scripts/visualize_study.py {{STUDY}} {{ARGS}}
+
+# Visualize with custom output directory
+visualize-to STUDY OUTPUT_DIR *ARGS:
+    . venv/bin/activate && python scripts/visualize_study.py {{STUDY}} --output {{OUTPUT_DIR}} {{ARGS}}
+
+# Generate only specific plot types
+visualize-plots STUDY *PLOTS:
+    . venv/bin/activate && python scripts/visualize_study.py {{STUDY}} --plots {{PLOTS}}
+
 # Clean extracted clips (removes videos and generated metadata, keeps schemas)
 clean-clips:
     find data/test_clips -type f \( -name '*.mp4' -o -name '*.mkv' -o -name '*.webm' -o -name '*.mov' -o -name '*.avi' \) -delete
@@ -132,3 +144,8 @@ clean-videos:
     rm -f data/raw_videos/download_metadata.json
     just clean-clips
     just clean-encoded
+
+# Clean analysis results (plots, CSVs, reports)
+clean-results:
+    find results -mindepth 1 -type d -exec rm -rf {} + 2>/dev/null || true
+    find results -type f -delete 2>/dev/null || true
