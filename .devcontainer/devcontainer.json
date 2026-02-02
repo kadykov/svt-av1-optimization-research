@@ -6,7 +6,9 @@
 	"customizations": {
 		"vscode": {
 			"extensions": [
-				"ms-python.python"
+				"ms-python.python",
+				"tamasfe.even-better-toml",
+				"mechatroner.rainbow-csv"
 			]
 		}
 	},
