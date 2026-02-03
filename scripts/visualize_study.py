@@ -274,7 +274,7 @@ def plot_heatmap(
     ax.set_ylabel("CRF (lower = higher bitrate/quality)")
     ax.set_title(f"{study_name}: {metric_label}\n(Preset vs CRF)")
 
-    output_path = output_dir / f"{study_name}_heatmap_{metric}.png"
+    output_path = output_dir / f"{study_name}_heatmap_{metric}.webp"
     plt.savefig(output_path)
     print(f"  Saved: {output_path}")
     plt.close(fig)
@@ -320,7 +320,7 @@ def plot_vs_crf(
     # Set integer ticks for CRF
     ax.set_xticks(sorted(df["crf"].unique()))
 
-    output_path = output_dir / f"{study_name}_vs_crf_{metric}.png"
+    output_path = output_dir / f"{study_name}_vs_crf_{metric}.webp"
     plt.savefig(output_path)
     print(f"  Saved: {output_path}")
     plt.close(fig)
@@ -366,7 +366,7 @@ def plot_vs_preset(
     # Set integer ticks for preset
     ax.set_xticks(sorted(df["preset"].unique()))
 
-    output_path = output_dir / f"{study_name}_vs_preset_{metric}.png"
+    output_path = output_dir / f"{study_name}_vs_preset_{metric}.webp"
     plt.savefig(output_path)
     print(f"  Saved: {output_path}")
     plt.close(fig)
@@ -431,7 +431,7 @@ def plot_vmaf_combined_vs_crf(
     ax.grid(True, alpha=0.3)
     ax.set_xticks(sorted(df["crf"].unique()))
 
-    output_path = output_dir / f"{study_name}_vs_crf_vmaf_combined.png"
+    output_path = output_dir / f"{study_name}_vs_crf_vmaf_combined.webp"
     plt.savefig(output_path)
     print(f"  Saved: {output_path}")
     plt.close(fig)
@@ -496,7 +496,7 @@ def plot_vmaf_combined_vs_preset(
     ax.grid(True, alpha=0.3)
     ax.set_xticks(sorted(df["preset"].unique()))
 
-    output_path = output_dir / f"{study_name}_vs_preset_vmaf_combined.png"
+    output_path = output_dir / f"{study_name}_vs_preset_vmaf_combined.webp"
     plt.savefig(output_path)
     print(f"  Saved: {output_path}")
     plt.close(fig)
@@ -600,7 +600,7 @@ def plot_clip_comparison(
         ax.grid(True, alpha=0.3)
         ax.set_xticks(sorted(df["preset"].unique()))
 
-        output_path = output_dir / f"{study_name}_clip_{metric}.png"
+        output_path = output_dir / f"{study_name}_clip_{metric}.webp"
         plt.savefig(output_path)
         print(f"  Saved: {output_path}")
         plt.close(fig)
