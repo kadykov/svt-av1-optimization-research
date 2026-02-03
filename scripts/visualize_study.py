@@ -39,8 +39,11 @@ except ImportError:
 
 # Colorblind-friendly palette: viridis (dark purple/blue to yellow)
 COLORMAP = "viridis"
-# For line plots, use a colorblind-friendly discrete palette
-LINE_PALETTE = "viridis"
+# For line plots, use colorful discrete palette with distinct colors
+# Markers will provide additional distinction for colorblind accessibility
+LINE_PALETTE = "tab10"  # Standard colorful palette
+# Marker shapes to cycle through for line plots
+LINE_MARKERS = ["o", "s", "^", "D", "v", "<", ">", "p", "*", "h"]
 
 # Configure matplotlib defaults
 plt.rcParams["figure.figsize"] = (10, 7)
@@ -57,10 +60,9 @@ sns.set_theme(style="whitegrid")
 
 
 # Metrics to analyze with their display names and higher_is_better flag
+# Special metric: "vmaf_combined" generates plots with both mean and p5
 METRICS = [
-    ("vmaf_mean", "VMAF Mean Score", True),
-    ("vmaf_p5", "VMAF 5th Percentile (Worst Frames)", True),
-    ("vmaf_p95", "VMAF 95th Percentile (Best Frames)", True),
+    ("vmaf_combined", "VMAF Score (Mean and P5)", True),  # Combined plot
     ("bpp", "Bitrate per Pixel (bpp)", False),
     ("vmaf_per_bpp", "VMAF per bpp (Quality Efficiency)", True),
     ("encoding_time_s", "Encoding Time (seconds)", False),
@@ -221,10 +223,16 @@ def aggregate_by_params(df: pd.DataFrame) -> pd.DataFrame:
     return aggregated
 
 
-def get_line_colors(n: int) -> list:
-    """Get n distinct colors from viridis colormap."""
+def get_line_colors_and_markers(n: int) -> tuple[list, list]:
+    """Get n distinct colors and markers for line plots.
+
+    Returns:
+        tuple: (colors, markers) where colors are from tab10 and markers cycle through shapes
+    """
     cmap = plt.colormaps.get_cmap(LINE_PALETTE)
-    return [cmap(i / max(1, n - 1)) for i in range(n)]
+    colors = [cmap(i % 10) for i in range(n)]  # tab10 has 10 colors
+    markers = [LINE_MARKERS[i % len(LINE_MARKERS)] for i in range(n)]
+    return colors, markers
 
 
 def plot_heatmap(
@@ -282,21 +290,21 @@ def plot_vs_crf(
     """
     Plot metric vs CRF, with one line per preset.
 
-    Lines with dots, colorblind-friendly palette.
+    Uses colorful palette with varying markers for accessibility.
     """
     presets = sorted(df["preset"].unique())
-    colors = get_line_colors(len(presets))
+    colors, markers = get_line_colors_and_markers(len(presets))
 
     fig, ax = plt.subplots(figsize=(10, 7))
 
-    for preset, color in zip(presets, colors, strict=True):
+    for preset, color, marker in zip(presets, colors, markers, strict=True):
         preset_data = df[df["preset"] == preset].sort_values("crf")
         if preset_data[metric].isna().all():
             continue
         ax.plot(
             preset_data["crf"],
             preset_data[metric],
-            marker="o",
+            marker=marker,
             linewidth=2,
             markersize=8,
             label=f"Preset {preset}",
@@ -328,21 +336,21 @@ def plot_vs_preset(
     """
     Plot metric vs preset, with one line per CRF.
 
-    Lines with dots, colorblind-friendly palette.
+    Uses colorful palette with varying markers for accessibility.
     """
     crfs = sorted(df["crf"].unique())
-    colors = get_line_colors(len(crfs))
+    colors, markers = get_line_colors_and_markers(len(crfs))
 
     fig, ax = plt.subplots(figsize=(10, 7))
 
-    for crf, color in zip(crfs, colors, strict=True):
+    for crf, color, marker in zip(crfs, colors, markers, strict=True):
         crf_data = df[df["crf"] == crf].sort_values("preset")
         if crf_data[metric].isna().all():
             continue
         ax.plot(
             crf_data["preset"],
             crf_data[metric],
-            marker="o",
+            marker=marker,
             linewidth=2,
             markersize=8,
             label=f"CRF {crf}",
@@ -364,6 +372,136 @@ def plot_vs_preset(
     plt.close(fig)
 
 
+def plot_vmaf_combined_vs_crf(
+    df: pd.DataFrame,
+    output_dir: Path,
+    study_name: str,
+) -> None:
+    """
+    Plot VMAF mean and P5 vs CRF on the same plot.
+
+    Mean: solid lines with filled markers
+    P5: dashed lines with open (unfilled) markers
+    Same color and marker shape for each preset across both metrics.
+    """
+    presets = sorted(df["preset"].unique())
+    colors, markers = get_line_colors_and_markers(len(presets))
+
+    fig, ax = plt.subplots(figsize=(10, 7))
+
+    # Plot VMAF mean (solid lines, filled markers)
+    for preset, color, marker in zip(presets, colors, markers, strict=True):
+        preset_data = df[df["preset"] == preset].sort_values("crf")
+        if preset_data["vmaf_mean"].isna().all():
+            continue
+        ax.plot(
+            preset_data["crf"],
+            preset_data["vmaf_mean"],
+            marker=marker,
+            linestyle="-",
+            linewidth=2,
+            markersize=8,
+            label=f"Preset {preset} (Mean)",
+            color=color,
+            markerfacecolor=color,
+        )
+
+    # Plot VMAF P5 (dashed lines, open markers)
+    for preset, color, marker in zip(presets, colors, markers, strict=True):
+        preset_data = df[df["preset"] == preset].sort_values("crf")
+        if preset_data["vmaf_p5"].isna().all():
+            continue
+        ax.plot(
+            preset_data["crf"],
+            preset_data["vmaf_p5"],
+            marker=marker,
+            linestyle="--",
+            linewidth=2,
+            markersize=8,
+            label=f"Preset {preset} (P5)",
+            color=color,
+            markerfacecolor="none",
+            markeredgewidth=2,
+        )
+
+    ax.set_xlabel("CRF (lower = higher bitrate/quality)")
+    ax.set_ylabel("VMAF Score")
+    ax.set_title(f"{study_name}: VMAF Score (Mean and P5) vs CRF")
+    ax.legend(title="Metric", loc="best", ncol=2, fontsize=8)
+    ax.grid(True, alpha=0.3)
+    ax.set_xticks(sorted(df["crf"].unique()))
+
+    output_path = output_dir / f"{study_name}_vs_crf_vmaf_combined.png"
+    plt.savefig(output_path)
+    print(f"  Saved: {output_path}")
+    plt.close(fig)
+
+
+def plot_vmaf_combined_vs_preset(
+    df: pd.DataFrame,
+    output_dir: Path,
+    study_name: str,
+) -> None:
+    """
+    Plot VMAF mean and P5 vs preset on the same plot.
+
+    Mean: solid lines with filled markers
+    P5: dashed lines with open (unfilled) markers
+    Same color and marker shape for each CRF across both metrics.
+    """
+    crfs = sorted(df["crf"].unique())
+    colors, markers = get_line_colors_and_markers(len(crfs))
+
+    fig, ax = plt.subplots(figsize=(10, 7))
+
+    # Plot VMAF mean (solid lines, filled markers)
+    for crf, color, marker in zip(crfs, colors, markers, strict=True):
+        crf_data = df[df["crf"] == crf].sort_values("preset")
+        if crf_data["vmaf_mean"].isna().all():
+            continue
+        ax.plot(
+            crf_data["preset"],
+            crf_data["vmaf_mean"],
+            marker=marker,
+            linestyle="-",
+            linewidth=2,
+            markersize=8,
+            label=f"CRF {crf} (Mean)",
+            color=color,
+            markerfacecolor=color,
+        )
+
+    # Plot VMAF P5 (dashed lines, open markers)
+    for crf, color, marker in zip(crfs, colors, markers, strict=True):
+        crf_data = df[df["crf"] == crf].sort_values("preset")
+        if crf_data["vmaf_p5"].isna().all():
+            continue
+        ax.plot(
+            crf_data["preset"],
+            crf_data["vmaf_p5"],
+            marker=marker,
+            linestyle="--",
+            linewidth=2,
+            markersize=8,
+            label=f"CRF {crf} (P5)",
+            color=color,
+            markerfacecolor="none",
+            markeredgewidth=2,
+        )
+
+    ax.set_xlabel("Preset (lower = slower, higher quality)")
+    ax.set_ylabel("VMAF Score")
+    ax.set_title(f"{study_name}: VMAF Score (Mean and P5) vs Preset")
+    ax.legend(title="Metric", loc="best", ncol=2, fontsize=8)
+    ax.grid(True, alpha=0.3)
+    ax.set_xticks(sorted(df["preset"].unique()))
+
+    output_path = output_dir / f"{study_name}_vs_preset_vmaf_combined.png"
+    plt.savefig(output_path)
+    print(f"  Saved: {output_path}")
+    plt.close(fig)
+
+
 def plot_metric_trio(
     df: pd.DataFrame,
     metric: str,
@@ -377,7 +515,23 @@ def plot_metric_trio(
       1. Heatmap (CRF vs Preset)
       2. Line chart vs CRF
       3. Line chart vs Preset
+
+    Special case: vmaf_combined generates combined mean+p5 plots.
     """
+    # Special handling for combined VMAF plot
+    if metric == "vmaf_combined":
+        if "vmaf_mean" not in df.columns or "vmaf_p5" not in df.columns:
+            print(f"Skipping {metric}: vmaf_mean or vmaf_p5 not available", file=sys.stderr)
+            return
+        print(f"\nGenerating plots for: {metric_label}")
+        # Still generate heatmaps for mean and p5 separately
+        plot_heatmap(df, "vmaf_mean", "VMAF Mean Score", output_dir, study_name, higher_is_better)
+        plot_heatmap(df, "vmaf_p5", "VMAF 5th Percentile", output_dir, study_name, higher_is_better)
+        # Combined line plots
+        plot_vmaf_combined_vs_crf(df, output_dir, study_name)
+        plot_vmaf_combined_vs_preset(df, output_dir, study_name)
+        return
+
     if metric not in df.columns or df[metric].isna().all():
         print(f"Skipping {metric}: no data available", file=sys.stderr)
         return
@@ -412,7 +566,7 @@ def plot_clip_comparison(
         ("bpp", "Bitrate per Pixel"),
     ]
 
-    colors = get_line_colors(len(clips))
+    colors, markers = get_line_colors_and_markers(len(clips))
 
     for metric, metric_label in clip_metrics:
         if metric not in df.columns:
@@ -423,7 +577,7 @@ def plot_clip_comparison(
 
         fig, ax = plt.subplots(figsize=(10, 7))
 
-        for clip, color in zip(clips, colors, strict=True):
+        for clip, color, marker in zip(clips, colors, markers, strict=True):
             subset = clip_data[clip_data["source_clip"] == clip].sort_values("preset")
             if subset.empty:
                 continue
@@ -432,7 +586,7 @@ def plot_clip_comparison(
             ax.plot(
                 subset["preset"],
                 subset[metric],
-                marker="o",
+                marker=marker,
                 linewidth=2,
                 markersize=8,
                 label=clip_short,
@@ -560,9 +714,7 @@ Examples:
   %(prog)s baseline_sweep --no-clip-plots
 
 Available metrics:
-  vmaf_mean           - VMAF Mean Score
-  vmaf_p5             - VMAF 5th Percentile (worst frames)
-  vmaf_p95            - VMAF 95th Percentile (best frames)
+  vmaf_combined       - VMAF Mean and P5 (combined plot)
   bpp                 - Bitrate per Pixel
   vmaf_per_bpp        - VMAF per bpp (quality efficiency)
   encoding_time_s     - Encoding Time
