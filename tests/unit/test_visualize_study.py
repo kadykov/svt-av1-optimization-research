@@ -145,8 +145,9 @@ def test_prepare_dataframe_structure(sample_analysis_data):
         "vmaf_harmonic_mean",
         "psnr_avg",
         "ssim_avg",
-        "vmaf_per_mb",
-        "quality_per_encode_s",
+        "bpp",
+        "vmaf_per_bpp",
+        "vmaf_per_time",
     ]
 
     for col in expected_columns:
@@ -169,7 +170,6 @@ def test_prepare_dataframe_values(sample_analysis_data):
     assert first["ssim_avg"] == 0.98
     assert abs(first["file_size_mb"] - 5.0) < 0.01  # 5 MB
     assert first["encoding_time_s"] == 10.5
-    assert first["vmaf_per_mb"] == 19.1
 
 
 def test_prepare_dataframe_percentiles(sample_analysis_data):
@@ -268,17 +268,19 @@ def test_prepare_dataframe_missing_optional_metrics(sample_analysis_data):
 
 
 def test_prepare_dataframe_efficiency_calculations(sample_analysis_data):
-    """Test that efficiency metrics are correctly included."""
+    """Test that efficiency metrics are correctly calculated."""
     df = prepare_dataframe(sample_analysis_data)
 
     # Check efficiency metrics exist
-    assert "vmaf_per_mb" in df.columns
-    assert "quality_per_encode_s" in df.columns
+    assert "vmaf_per_bpp" in df.columns
+    assert "vmaf_per_time" in df.columns
+    assert "vmaf_per_bpp_per_time" in df.columns
 
-    # Verify values
+    # Verify vmaf_per_time is calculated correctly
+    # vmaf_per_time = vmaf_mean / encoding_time_s
     first = df.iloc[0]
-    assert first["vmaf_per_mb"] == 19.1
-    assert first["quality_per_encode_s"] == 9.1
+    expected_vmaf_per_time = first["vmaf_mean"] / first["encoding_time_s"]
+    assert abs(first["vmaf_per_time"] - expected_vmaf_per_time) < 0.01
 
 
 def test_dataframe_can_export_csv(sample_analysis_data, tmp_path):

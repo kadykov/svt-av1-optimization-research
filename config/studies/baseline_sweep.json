@@ -2,7 +2,7 @@
   "study_name": "baseline_sweep",
   "description": "Main study: comprehensive sweep of preset and CRF values to find optimal speed/quality/size tradeoffs for different content types. Uses encoder defaults for all other parameters.",
   "parameters": {
-    "preset": [6, 8, 10],
-    "crf": [20, 30, 40]
+    "preset": [4, 6, 8, 10, 12],
+    "crf": [20, 25, 30, 35, 40]
   }
 }

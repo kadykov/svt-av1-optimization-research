@@ -2,14 +2,17 @@
 """
 Visualize and analyze encoding study results.
 
-Reads analysis_metadata.json and encoding_metadata.json from a study,
-generates plots and exports data to CSV for further analysis.
+Reads analysis_metadata.json from a study and generates clear, focused plots.
+Each metric gets three visualizations:
+  1. Heatmap: CRF vs Preset
+  2. Line chart: Metric vs CRF (one line per preset)
+  3. Line chart: Metric vs Preset (one line per CRF)
 
-Key visualizations:
-- Rate-distortion curves (bitrate vs VMAF)
-- Speed vs quality tradeoffs
-- Preset/CRF parameter impact
-- Per-clip comparisons
+Design principles:
+  - One figure per file (no subfigures)
+  - Colorblind-friendly palettes (viridis)
+  - Aggregate statistics across clips first
+  - Focus on actionable metrics
 """
 
 import argparse
@@ -21,6 +24,7 @@ from typing import Any
 
 try:
     import matplotlib.pyplot as plt
+    import numpy as np
     import pandas as pd
     import seaborn as sns
 except ImportError:
@@ -33,10 +37,36 @@ except ImportError:
     sys.exit(1)
 
 
-# Set plotting style
-sns.set_theme(style="whitegrid", palette="deep")
-plt.rcParams["figure.figsize"] = (12, 8)
-plt.rcParams["font.size"] = 10
+# Colorblind-friendly palette: viridis (dark purple/blue to yellow)
+COLORMAP = "viridis"
+# For line plots, use a colorblind-friendly discrete palette
+LINE_PALETTE = "viridis"
+
+# Configure matplotlib defaults
+plt.rcParams["figure.figsize"] = (10, 7)
+plt.rcParams["font.size"] = 11
+plt.rcParams["axes.titlesize"] = 14
+plt.rcParams["axes.labelsize"] = 12
+plt.rcParams["legend.fontsize"] = 10
+plt.rcParams["figure.dpi"] = 100
+plt.rcParams["savefig.dpi"] = 300
+plt.rcParams["savefig.bbox"] = "tight"
+
+# Use a clean style
+sns.set_theme(style="whitegrid")
+
+
+# Metrics to analyze with their display names and higher_is_better flag
+METRICS = [
+    ("vmaf_mean", "VMAF Mean Score", True),
+    ("vmaf_p5", "VMAF 5th Percentile (Worst Frames)", True),
+    ("vmaf_p95", "VMAF 95th Percentile (Best Frames)", True),
+    ("bpp", "Bitrate per Pixel (bpp)", False),
+    ("vmaf_per_bpp", "VMAF per bpp (Quality Efficiency)", True),
+    ("encoding_time_s", "Encoding Time (seconds)", False),
+    ("vmaf_per_time", "VMAF per Encoding Second", True),
+    ("vmaf_per_bpp_per_time", "VMAF per bpp per Encoding Second", True),
+]
 
 
 def load_json(file_path: Path) -> dict[str, Any]:
@@ -62,7 +92,6 @@ def load_clip_metadata() -> dict[str, dict[str, Any]]:
     try:
         with open(clip_metadata_path, encoding="utf-8") as f:
             data = json.load(f)
-            # Create lookup by clip name
             return {clip["clip_name"]: clip for clip in data.get("clips", [])}
     except (json.JSONDecodeError, KeyError):
         return {}
@@ -73,9 +102,8 @@ def prepare_dataframe(analysis_data: dict[str, Any]) -> pd.DataFrame:
     Convert analysis metadata to pandas DataFrame.
 
     Extracts key metrics and parameters into a flat structure for analysis.
-    Calculates bitrate per pixel (bpp) for resolution-normalized comparisons.
+    Calculates derived metrics like bpp, vmaf_per_bpp, etc.
     """
-    # Load clip metadata for resolution info
     clip_metadata = load_clip_metadata()
 
     rows = []
@@ -90,13 +118,11 @@ def prepare_dataframe(analysis_data: dict[str, Any]) -> pd.DataFrame:
         height = clip_info.get("source_height", 0)
         fps = clip_info.get("source_fps", 0)
 
-        # Get bitrate and file size from encoding
         file_size_bytes = encoding["file_size_bytes"]
+        bitrate_kbps = encoding.get("bitrate_kbps", 0) or 0
+        encoding_time_s = encoding.get("encoding_time_seconds", 0) or 0
 
-        # Bitrate should come from analysis metadata
-        bitrate_kbps = encoding.get("bitrate_kbps")
-
-        # Calculate bitrate per pixel (bpp) - normalized metric
+        # Calculate bitrate per pixel (bpp)
         # bpp = bitrate / (width * height * fps)
         bpp = 0.0
         if bitrate_kbps and width and height and fps:
@@ -107,7 +133,7 @@ def prepare_dataframe(analysis_data: dict[str, Any]) -> pd.DataFrame:
         row = {
             # Identifiers
             "output_file": encoding["output_file"],
-            "source_clip": encoding["source_clip"],
+            "source_clip": source_clip,
             # Parameters
             "preset": encoding["parameters"]["preset"],
             "crf": encoding["parameters"]["crf"],
@@ -118,11 +144,10 @@ def prepare_dataframe(analysis_data: dict[str, Any]) -> pd.DataFrame:
             # File metrics
             "file_size_mb": file_size_bytes / (1024 * 1024),
             "bitrate_kbps": bitrate_kbps,
-            "bpp": bpp,  # Bitrate per pixel - key normalization metric
-            # Encoding performance
-            "encoding_time_s": encoding.get("encoding_time_seconds"),
+            "bpp": bpp,
+            # Encoding time
+            "encoding_time_s": encoding_time_s,
             "encoding_fps": encoding.get("encoding_fps", 0),
-            "analysis_time_s": encoding.get("analysis_time_seconds"),
         }
 
         # VMAF metrics
@@ -150,572 +175,305 @@ def prepare_dataframe(analysis_data: dict[str, Any]) -> pd.DataFrame:
         if ssim := encoding["metrics"].get("ssim"):
             row["ssim_avg"] = ssim["avg_mean"]
 
-        # Efficiency metrics
-        if eff := encoding.get("efficiency_metrics"):
-            row["vmaf_per_mb"] = eff.get("vmaf_per_mbyte")
-            row["quality_per_encode_s"] = eff.get("quality_per_encoding_second")
-        # Calculate VMAF per bpp (quality per bitrate per pixel)
-        if bpp > 0 and row.get("vmaf_mean"):
-            row["vmaf_per_bpp"] = row["vmaf_mean"] / bpp
-        else:
-            row["vmaf_per_bpp"] = None
         rows.append(row)
 
     df = pd.DataFrame(rows)
 
-    # Bitrate should be calculated during analysis phase
-    # If missing, we cannot accurately calculate bpp
-    if not df.empty and df["bitrate_kbps"].isna().any():
-        missing_count = df["bitrate_kbps"].isna().sum()
-        print(
-            f"Warning: {missing_count} encodings missing bitrate data. "
-            "Re-run analysis to calculate bitrates.",
-            file=sys.stderr,
-        )
+    if df.empty:
+        return df
+
+    # Calculate derived metrics
+    # VMAF per bpp (quality efficiency)
+    df["vmaf_per_bpp"] = np.where(
+        df["bpp"] > 0,
+        df["vmaf_mean"] / df["bpp"],
+        np.nan,
+    )
+
+    # VMAF per encoding time
+    df["vmaf_per_time"] = np.where(
+        df["encoding_time_s"] > 0,
+        df["vmaf_mean"] / df["encoding_time_s"],
+        np.nan,
+    )
+
+    # VMAF per bpp per encoding time (combined efficiency)
+    df["vmaf_per_bpp_per_time"] = np.where(
+        (df["bpp"] > 0) & (df["encoding_time_s"] > 0),
+        df["vmaf_mean"] / df["bpp"] / df["encoding_time_s"],
+        np.nan,
+    )
 
     return df
 
 
-def plot_rate_distortion(df: pd.DataFrame, output_dir: Path, study_name: str) -> None:
+def aggregate_by_params(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Plot rate-distortion curves: VMAF vs bitrate per pixel.
+    Aggregate data by preset and CRF, computing mean across all clips.
 
-    Separate curves for each preset, with CRF values as points.
-    Uses bitrate per pixel (bpp) to normalize across different resolutions.
+    Returns a DataFrame with one row per (preset, crf) combination.
     """
-    _fig, axes = plt.subplots(1, 2, figsize=(16, 6))
+    numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+    # Remove preset and crf from aggregation columns
+    agg_cols = [c for c in numeric_cols if c not in ["preset", "crf"]]
 
-    # Use bitrate per pixel (bpp) as x-axis - resolution-normalized metric
-    x_col = "bpp"
-    x_label = "Bitrate per Pixel (bpp)"
-
-    # Plot 1: VMAF mean vs bpp, colored by preset
-    for preset in sorted(df["preset"].unique()):
-        # Sort by bpp (x-axis) to create meaningful progressive lines
-        preset_data = df[df["preset"] == preset].sort_values(x_col)
-        axes[0].plot(
-            preset_data[x_col],
-            preset_data["vmaf_mean"],
-            marker="o",
-            label=f"Preset {preset}",
-            linewidth=2,
-            markersize=8,
-        )
-
-        # Annotate CRF values
-        for _, row in preset_data.iterrows():
-            axes[0].annotate(
-                f"CRF{int(row['crf'])}",
-                (row[x_col], row["vmaf_mean"]),
-                textcoords="offset points",
-                xytext=(0, 10),
-                ha="center",
-                fontsize=8,
-                alpha=0.7,
-            )
-
-    axes[0].set_xlabel(x_label)
-    axes[0].set_ylabel("VMAF Mean Score")
-    axes[0].set_title(f"{study_name}: Rate-Distortion (VMAF Mean vs bpp)")
-    axes[0].legend()
-    axes[0].grid(True, alpha=0.3)
-
-    # Plot 2: VMAF harmonic mean vs bpp (worst-case quality)
-    for preset in sorted(df["preset"].unique()):
-        # Sort by bpp for meaningful progression
-        preset_data = df[df["preset"] == preset].sort_values(x_col)
-        axes[1].plot(
-            preset_data[x_col],
-            preset_data["vmaf_harmonic_mean"],
-            marker="s",
-            label=f"Preset {preset}",
-            linewidth=2,
-            markersize=8,
-        )
-
-    axes[1].set_xlabel(x_label)
-    axes[1].set_ylabel("VMAF Harmonic Mean Score")
-    axes[1].set_title(f"{study_name}: Rate-Distortion (VMAF Harmonic Mean vs bpp)")
-    axes[1].legend()
-    axes[1].grid(True, alpha=0.3)
-
-    plt.tight_layout()
-    output_path = output_dir / f"{study_name}_rate_distortion.png"
-    plt.savefig(output_path, dpi=300, bbox_inches="tight")
-    print(f"Saved: {output_path}")
-    plt.close()
+    aggregated = df.groupby(["preset", "crf"])[agg_cols].mean().reset_index()
+    return aggregated
 
 
-def plot_storage_efficiency(df: pd.DataFrame, output_dir: Path, study_name: str) -> None:
+def get_line_colors(n: int) -> list:
+    """Get n distinct colors from viridis colormap."""
+    cmap = plt.colormaps.get_cmap(LINE_PALETTE)
+    return [cmap(i / max(1, n - 1)) for i in range(n)]
+
+
+def plot_heatmap(
+    df: pd.DataFrame,
+    metric: str,
+    metric_label: str,
+    output_dir: Path,
+    study_name: str,
+    higher_is_better: bool = True,
+) -> None:
     """
-    Plot storage efficiency metrics for archival/storage use cases.
+    Plot a heatmap of the metric vs CRF (y-axis) and Preset (x-axis).
 
-    When encoding time is less critical, focus on quality per bitrate per pixel.
-    Shows VMAF/bpp against encoding parameters (preset, CRF) to guide configuration choices.
+    Uses viridis colormap for colorblind accessibility.
     """
-    _fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+    pivot = df.pivot(index="crf", columns="preset", values=metric)
 
-    # Check if vmaf_per_bpp is available
-    if "vmaf_per_bpp" not in df.columns or df["vmaf_per_bpp"].isna().all():
-        print(
-            "Warning: vmaf_per_bpp not available, skipping storage efficiency plot", file=sys.stderr
-        )
+    if pivot.empty or pivot.isna().all().all():
+        print(f"  Skipping heatmap for {metric}: no data available", file=sys.stderr)
         return
 
-    # Plot 1: VMAF per bpp by preset (averaged across CRFs)
-    preset_efficiency = df.groupby("preset")["vmaf_per_bpp"].mean().sort_index()
-    axes[0, 0].bar(
-        [f"P{p}" for p in preset_efficiency.index],
-        preset_efficiency.values,
-        color=sns.color_palette("deep", len(preset_efficiency)),
-    )
-    axes[0, 0].set_xlabel("Preset")
-    axes[0, 0].set_ylabel("VMAF per bpp (quality/bitrate-per-pixel)")
-    axes[0, 0].set_title(f"{study_name}: Storage Efficiency by Preset")
-    axes[0, 0].grid(True, alpha=0.3, axis="y")
+    fig, ax = plt.subplots(figsize=(10, 7))
 
-    # Plot 2: VMAF per bpp by CRF (averaged across presets)
-    crf_efficiency = df.groupby("crf")["vmaf_per_bpp"].mean().sort_index()
-    axes[0, 1].plot(
-        crf_efficiency.index,
-        crf_efficiency.values,
-        marker="o",
-        linewidth=2,
-        markersize=8,
-        color="#2ecc71",
-    )
-    axes[0, 1].set_xlabel("CRF (lower = higher quality target)")
-    axes[0, 1].set_ylabel("VMAF per bpp (quality/bitrate-per-pixel)")
-    axes[0, 1].set_title(f"{study_name}: Storage Efficiency by CRF")
-    axes[0, 1].grid(True, alpha=0.3)
-    axes[0, 1].invert_xaxis()  # Lower CRF on right (better quality)
-
-    # Plot 3: Heatmap of VMAF per bpp by preset and CRF
-    efficiency_pivot = df.groupby(["preset", "crf"])["vmaf_per_bpp"].mean().reset_index()
-    efficiency_matrix = efficiency_pivot.pivot(index="crf", columns="preset", values="vmaf_per_bpp")
+    # Use viridis, reversed if lower is better
+    cmap = COLORMAP if higher_is_better else f"{COLORMAP}_r"
 
     sns.heatmap(
-        efficiency_matrix,
+        pivot,
         annot=True,
-        fmt=".1f",
-        cmap="RdYlGn",
-        ax=axes[1, 0],
-        cbar_kws={"label": "VMAF per bpp"},
+        fmt=".2f",
+        cmap=cmap,
+        ax=ax,
+        cbar_kws={"label": metric_label},
+        linewidths=0.5,
+        linecolor="white",
     )
-    axes[1, 0].set_xlabel("Preset")
-    axes[1, 0].set_ylabel("CRF")
-    axes[1, 0].set_title(f"{study_name}: Storage Efficiency Heatmap (VMAF/bpp)")
 
-    # Plot 4: Time investment for storage efficiency
-    # Shows encoding time needed to achieve efficiency gains
-    for preset in sorted(df["preset"].unique()):
+    ax.set_xlabel("Preset (lower = slower, higher quality)")
+    ax.set_ylabel("CRF (lower = higher bitrate/quality)")
+    ax.set_title(f"{study_name}: {metric_label}\n(Preset vs CRF)")
+
+    output_path = output_dir / f"{study_name}_heatmap_{metric}.png"
+    plt.savefig(output_path)
+    print(f"  Saved: {output_path}")
+    plt.close(fig)
+
+
+def plot_vs_crf(
+    df: pd.DataFrame,
+    metric: str,
+    metric_label: str,
+    output_dir: Path,
+    study_name: str,
+) -> None:
+    """
+    Plot metric vs CRF, with one line per preset.
+
+    Lines with dots, colorblind-friendly palette.
+    """
+    presets = sorted(df["preset"].unique())
+    colors = get_line_colors(len(presets))
+
+    fig, ax = plt.subplots(figsize=(10, 7))
+
+    for preset, color in zip(presets, colors, strict=True):
         preset_data = df[df["preset"] == preset].sort_values("crf")
-        axes[1, 1].scatter(
-            preset_data["encoding_time_s"],
-            preset_data["vmaf_per_bpp"],
+        if preset_data[metric].isna().all():
+            continue
+        ax.plot(
+            preset_data["crf"],
+            preset_data[metric],
+            marker="o",
+            linewidth=2,
+            markersize=8,
             label=f"Preset {preset}",
-            s=100,
-            alpha=0.7,
+            color=color,
         )
 
-    axes[1, 1].set_xlabel("Encoding Time (seconds)")
-    axes[1, 1].set_ylabel("VMAF per bpp (storage efficiency)")
-    axes[1, 1].set_title(f"{study_name}: Time Investment for Storage Efficiency")
-    axes[1, 1].legend()
-    axes[1, 1].grid(True, alpha=0.3)
+    ax.set_xlabel("CRF (lower = higher bitrate/quality)")
+    ax.set_ylabel(metric_label)
+    ax.set_title(f"{study_name}: {metric_label} vs CRF")
+    ax.legend(title="Preset", loc="best")
+    ax.grid(True, alpha=0.3)
 
-    plt.tight_layout()
-    output_path = output_dir / f"{study_name}_storage_efficiency.png"
-    plt.savefig(output_path, dpi=300, bbox_inches="tight")
-    print(f"Saved: {output_path}")
-    plt.close()
+    # Set integer ticks for CRF
+    ax.set_xticks(sorted(df["crf"].unique()))
+
+    output_path = output_dir / f"{study_name}_vs_crf_{metric}.png"
+    plt.savefig(output_path)
+    print(f"  Saved: {output_path}")
+    plt.close(fig)
 
 
-def plot_speed_quality_tradeoff(df: pd.DataFrame, output_dir: Path, study_name: str) -> None:
+def plot_vs_preset(
+    df: pd.DataFrame,
+    metric: str,
+    metric_label: str,
+    output_dir: Path,
+    study_name: str,
+) -> None:
     """
-    Plot encoding speed vs quality tradeoffs.
+    Plot metric vs preset, with one line per CRF.
 
-    Shows how preset affects encoding time vs VMAF score.
+    Lines with dots, colorblind-friendly palette.
     """
-    _fig, axes = plt.subplots(1, 2, figsize=(16, 6))
+    crfs = sorted(df["crf"].unique())
+    colors = get_line_colors(len(crfs))
 
-    # Plot 1: Encoding time vs VMAF, colored by preset
-    for preset in sorted(df["preset"].unique()):
-        preset_data = df[df["preset"] == preset]
-        axes[0].scatter(
-            preset_data["encoding_time_s"],
-            preset_data["vmaf_mean"],
-            label=f"Preset {preset}",
-            s=100,
-            alpha=0.7,
+    fig, ax = plt.subplots(figsize=(10, 7))
+
+    for crf, color in zip(crfs, colors, strict=True):
+        crf_data = df[df["crf"] == crf].sort_values("preset")
+        if crf_data[metric].isna().all():
+            continue
+        ax.plot(
+            crf_data["preset"],
+            crf_data[metric],
+            marker="o",
+            linewidth=2,
+            markersize=8,
+            label=f"CRF {crf}",
+            color=color,
         )
 
-    axes[0].set_xlabel("Encoding Time (seconds)")
-    axes[0].set_ylabel("VMAF Mean Score")
-    axes[0].set_title(f"{study_name}: Speed vs Quality Tradeoff")
-    axes[0].legend()
-    axes[0].grid(True, alpha=0.3)
+    ax.set_xlabel("Preset (lower = slower, higher quality)")
+    ax.set_ylabel(metric_label)
+    ax.set_title(f"{study_name}: {metric_label} vs Preset")
+    ax.legend(title="CRF", loc="best")
+    ax.grid(True, alpha=0.3)
 
-    # Plot 2: Quality per encoding second (efficiency)
-    if "quality_per_encode_s" in df.columns:
-        preset_means = df.groupby("preset")["quality_per_encode_s"].mean().sort_index()
-        axes[1].bar(
-            [f"P{p}" for p in preset_means.index],
-            preset_means.values,
-            color=sns.color_palette("deep", len(preset_means)),
-        )
-        axes[1].set_xlabel("Preset")
-        axes[1].set_ylabel("VMAF Mean / Encoding Time (score/s)")
-        axes[1].set_title(f"{study_name}: Encoding Efficiency by Preset")
-        axes[1].grid(True, alpha=0.3, axis="y")
+    # Set integer ticks for preset
+    ax.set_xticks(sorted(df["preset"].unique()))
 
-    plt.tight_layout()
-    output_path = output_dir / f"{study_name}_speed_quality.png"
-    plt.savefig(output_path, dpi=300, bbox_inches="tight")
-    print(f"Saved: {output_path}")
-    plt.close()
+    output_path = output_dir / f"{study_name}_vs_preset_{metric}.png"
+    plt.savefig(output_path)
+    print(f"  Saved: {output_path}")
+    plt.close(fig)
 
 
-def plot_multimetric_comparison(df: pd.DataFrame, output_dir: Path, study_name: str) -> None:
+def plot_metric_trio(
+    df: pd.DataFrame,
+    metric: str,
+    metric_label: str,
+    output_dir: Path,
+    study_name: str,
+    higher_is_better: bool = True,
+) -> None:
     """
-    Compare VMAF, PSNR, and SSIM metrics across configurations.
-
-    Shows how different quality metrics correlate and respond to encoding parameters.
+    Generate the trio of plots for a metric:
+      1. Heatmap (CRF vs Preset)
+      2. Line chart vs CRF
+      3. Line chart vs Preset
     """
-    # Check which metrics are available
-    has_psnr = "psnr_y" in df.columns and df["psnr_y"].notna().any()
-    has_ssim = "ssim" in df.columns and df["ssim"].notna().any()
-
-    if not has_psnr and not has_ssim:
-        print("Skipping multi-metric comparison (only VMAF available)", file=sys.stderr)
+    if metric not in df.columns or df[metric].isna().all():
+        print(f"Skipping {metric}: no data available", file=sys.stderr)
         return
 
-    _fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+    print(f"\nGenerating plots for: {metric_label}")
 
-    # Plot 1: VMAF vs bpp (bitrate per pixel)
-    for preset in sorted(df["preset"].unique()):
-        preset_data = df[df["preset"] == preset].sort_values("bpp")
-        axes[0, 0].plot(
-            preset_data["bpp"],
-            preset_data["vmaf_mean"],
-            marker="o",
-            label=f"Preset {preset}",
-            linewidth=2,
-            markersize=6,
-        )
-    axes[0, 0].set_xlabel("Bitrate per Pixel (bpp)")
-    axes[0, 0].set_ylabel("VMAF Mean Score")
-    axes[0, 0].set_title(f"{study_name}: VMAF vs bpp")
-    axes[0, 0].legend()
-    axes[0, 0].grid(True, alpha=0.3)
-
-    # Plot 2: PSNR vs bpp
-    if has_psnr:
-        for preset in sorted(df["preset"].unique()):
-            preset_data = df[df["preset"] == preset].sort_values("bpp")
-            axes[0, 1].plot(
-                preset_data["bpp"],
-                preset_data["psnr_y"],
-                marker="s",
-                label=f"Preset {preset}",
-                linewidth=2,
-                markersize=6,
-            )
-        axes[0, 1].set_xlabel("Bitrate per Pixel (bpp)")
-        axes[0, 1].set_ylabel("PSNR-Y (dB)")
-        axes[0, 1].set_title(f"{study_name}: PSNR vs bpp")
-        axes[0, 1].legend()
-        axes[0, 1].grid(True, alpha=0.3)
-    else:
-        axes[0, 1].text(0.5, 0.5, "PSNR not available", ha="center", va="center")
-        axes[0, 1].axis("off")
-
-    # Plot 3: SSIM vs bpp
-    if has_ssim:
-        for preset in sorted(df["preset"].unique()):
-            preset_data = df[df["preset"] == preset].sort_values("bpp")
-            axes[1, 0].plot(
-                preset_data["bpp"],
-                preset_data["ssim"],
-                marker="^",
-                label=f"Preset {preset}",
-                linewidth=2,
-                markersize=6,
-            )
-        axes[1, 0].set_xlabel("Bitrate per Pixel (bpp)")
-        axes[1, 0].set_ylabel("SSIM Score")
-        axes[1, 0].set_title(f"{study_name}: SSIM vs bpp")
-        axes[1, 0].legend()
-        axes[1, 0].grid(True, alpha=0.3)
-    else:
-        axes[1, 0].text(0.5, 0.5, "SSIM not available", ha="center", va="center")
-        axes[1, 0].axis("off")
-
-    # Plot 4: Correlation between metrics (VMAF vs PSNR)
-    if has_psnr:
-        for preset in sorted(df["preset"].unique()):
-            preset_data = df[df["preset"] == preset]
-            axes[1, 1].scatter(
-                preset_data["vmaf_mean"],
-                preset_data["psnr_y"],
-                label=f"Preset {preset}",
-                s=80,
-                alpha=0.6,
-            )
-        axes[1, 1].set_xlabel("VMAF Mean Score")
-        axes[1, 1].set_ylabel("PSNR-Y (dB)")
-        axes[1, 1].set_title(f"{study_name}: VMAF vs PSNR Correlation")
-        axes[1, 1].legend()
-        axes[1, 1].grid(True, alpha=0.3)
-    elif has_ssim:
-        # Fallback to VMAF vs SSIM if PSNR not available
-        for preset in sorted(df["preset"].unique()):
-            preset_data = df[df["preset"] == preset]
-            axes[1, 1].scatter(
-                preset_data["vmaf_mean"],
-                preset_data["ssim"],
-                label=f"Preset {preset}",
-                s=80,
-                alpha=0.6,
-            )
-        axes[1, 1].set_xlabel("VMAF Mean Score")
-        axes[1, 1].set_ylabel("SSIM Score")
-        axes[1, 1].set_title(f"{study_name}: VMAF vs SSIM Correlation")
-        axes[1, 1].legend()
-        axes[1, 1].grid(True, alpha=0.3)
-    else:
-        axes[1, 1].text(0.5, 0.5, "Correlation plot not available", ha="center", va="center")
-        axes[1, 1].axis("off")
-
-    plt.tight_layout()
-    output_path = output_dir / f"{study_name}_multimetric_comparison.png"
-    plt.savefig(output_path, dpi=300, bbox_inches="tight")
-    print(f"Saved: {output_path}")
-    plt.close()
+    plot_heatmap(df, metric, metric_label, output_dir, study_name, higher_is_better)
+    plot_vs_crf(df, metric, metric_label, output_dir, study_name)
+    plot_vs_preset(df, metric, metric_label, output_dir, study_name)
 
 
-def plot_parameter_impact(df: pd.DataFrame, output_dir: Path, study_name: str) -> None:
+def plot_clip_comparison(
+    df: pd.DataFrame,
+    output_dir: Path,
+    study_name: str,
+) -> None:
     """
-    Plot how parameters (preset, CRF) affect metrics.
+    Plot per-clip comparison: one line per clip, x-axis = preset.
 
-    Heatmaps showing parameter combinations and their results.
-    """
-    _fig, axes = plt.subplots(2, 2, figsize=(16, 12))
-
-    # Aggregate by preset and CRF (mean across clips)
-    grouped = df.groupby(["preset", "crf"]).agg(
-        {
-            "vmaf_mean": "mean",
-            "bpp": "mean",
-            "encoding_time_s": "mean",
-            "vmaf_per_bpp": "mean",
-        }
-    )
-
-    # Create pivot tables for heatmaps
-    metrics = [
-        ("vmaf_mean", "VMAF Mean Score", "RdYlGn"),
-        ("bpp", "Bitrate per Pixel (bpp)", "YlOrRd"),
-        ("encoding_time_s", "Encoding Time (s)", "YlOrBr"),
-        ("vmaf_per_bpp", "VMAF per bpp (efficiency)", "RdYlGn"),
-    ]
-
-    for idx, (metric, title, cmap) in enumerate(metrics):
-        ax = axes[idx // 2, idx % 2]
-        pivot = grouped[metric].reset_index().pivot(index="crf", columns="preset", values=metric)
-
-        sns.heatmap(
-            pivot,
-            annot=True,
-            fmt=".2f",
-            cmap=cmap,
-            ax=ax,
-            cbar_kws={"label": title},
-        )
-        ax.set_title(f"{study_name}: {title} by Preset and CRF")
-        ax.set_xlabel("Preset")
-        ax.set_ylabel("CRF")
-
-    plt.tight_layout()
-    output_path = output_dir / f"{study_name}_parameter_impact.png"
-    plt.savefig(output_path, dpi=300, bbox_inches="tight")
-    print(f"Saved: {output_path}")
-    plt.close()
-
-
-def plot_clip_comparison(df: pd.DataFrame, output_dir: Path, study_name: str) -> None:
-    """
-    Compare how different clips respond to encoding parameters.
-
-    Shows content-dependent behavior.
+    Uses line plots instead of bar charts for clearer trend comparison.
+    Generates separate figures for key metrics.
     """
     clips = df["source_clip"].unique()
     if len(clips) < 2:
         print("Skipping clip comparison (only one clip)", file=sys.stderr)
         return
 
-    _fig, axes = plt.subplots(1, 2, figsize=(16, 6))
-
-    # Plot 1: VMAF by clip for different presets
-    clip_data = []
-    for clip in clips:
-        for preset in sorted(df["preset"].unique()):
-            subset = df[(df["source_clip"] == clip) & (df["preset"] == preset)]
-            if not subset.empty:
-                # Keep clip identifier unique by preserving clip number
-                clip_name = clip.replace(".mp4", "").replace(".mkv", "")
-                # Shorten long names but keep the clip number
-                if len(clip_name) > 25:
-                    parts = clip_name.split("_clip_")
-                    if len(parts) == 2:
-                        clip_name = f"{parts[0][:15]}_c{parts[1]}"
-                    else:
-                        clip_name = clip_name[:25]
-                clip_data.append(
-                    {
-                        "clip": clip_name,
-                        "preset": f"P{preset}",
-                        "vmaf_mean": subset["vmaf_mean"].mean(),
-                    }
-                )
-
-    clip_df = pd.DataFrame(clip_data)
-    clip_pivot = clip_df.pivot(index="clip", columns="preset", values="vmaf_mean")
-
-    clip_pivot.plot(kind="bar", ax=axes[0], width=0.8)
-    axes[0].set_xlabel("Source Clip")
-    axes[0].set_ylabel("VMAF Mean Score")
-    axes[0].set_title(f"{study_name}: Quality by Clip and Preset")
-    axes[0].legend(title="Preset")
-    axes[0].grid(True, alpha=0.3, axis="y")
-    axes[0].tick_params(axis="x", rotation=45)
-
-    # Plot 2: Bitrate per pixel by clip
-    clip_bpp_data = []
-    for clip in clips:
-        for preset in sorted(df["preset"].unique()):
-            subset = df[(df["source_clip"] == clip) & (df["preset"] == preset)]
-            if not subset.empty:
-                # Keep clip identifier unique by preserving clip number
-                clip_name = clip.replace(".mp4", "").replace(".mkv", "")
-                # Shorten long names but keep the clip number
-                if len(clip_name) > 25:
-                    parts = clip_name.split("_clip_")
-                    if len(parts) == 2:
-                        clip_name = f"{parts[0][:15]}_c{parts[1]}"
-                    else:
-                        clip_name = clip_name[:25]
-                clip_bpp_data.append(
-                    {
-                        "clip": clip_name,
-                        "preset": f"P{preset}",
-                        "bpp": subset["bpp"].mean(),
-                    }
-                )
-
-    bpp_df = pd.DataFrame(clip_bpp_data)
-    bpp_pivot = bpp_df.pivot(index="clip", columns="preset", values="bpp")
-
-    bpp_pivot.plot(kind="bar", ax=axes[1], width=0.8)
-    axes[1].set_xlabel("Source Clip")
-    axes[1].set_ylabel("Bitrate per Pixel (bpp)")
-    axes[1].set_title(f"{study_name}: Bitrate per Pixel by Clip and Preset")
-    axes[1].legend(title="Preset")
-    axes[1].grid(True, alpha=0.3, axis="y")
-    axes[1].tick_params(axis="x", rotation=45)
-
-    plt.tight_layout()
-    output_path = output_dir / f"{study_name}_clip_comparison.png"
-    plt.savefig(output_path, dpi=300, bbox_inches="tight")
-    print(f"Saved: {output_path}")
-    plt.close()
-
-
-def plot_vmaf_distribution(df: pd.DataFrame, output_dir: Path, study_name: str) -> None:
-    """
-    Plot VMAF score distributions (percentiles) for different configurations.
-
-    Shows consistency of quality across frames.
-    """
-    _fig, axes = plt.subplots(1, 2, figsize=(16, 6))
-
-    # Plot 1: Box plot of VMAF statistics by preset
-    vmaf_stats = []
-    for _, row in df.iterrows():
-        vmaf_stats.append(
-            {
-                "preset": f"P{int(row['preset'])}\nCRF{int(row['crf'])}",
-                "Min": row["vmaf_min"],
-                "P5": row["vmaf_p5"],
-                "P25": row["vmaf_p25"],
-                "Median": row["vmaf_median"],
-                "P75": row["vmaf_p75"],
-                "P95": row["vmaf_p95"],
-                "Mean": row["vmaf_mean"],
-            }
-        )
-
-    stats_df = pd.DataFrame(vmaf_stats)
-
-    # Create box plot manually using percentiles
-    positions = range(len(stats_df))
-    axes[0].boxplot(
-        [[s["P5"], s["P25"], s["Median"], s["P75"], s["P95"]] for _, s in stats_df.iterrows()],
-        positions=positions,
-        widths=0.6,
-        showfliers=False,
-    )
-    axes[0].set_xticks(positions)
-    axes[0].set_xticklabels(stats_df["preset"], rotation=45, ha="right")
-    axes[0].set_ylabel("VMAF Score")
-    axes[0].set_title(f"{study_name}: VMAF Distribution (P5-P95)")
-    axes[0].grid(True, alpha=0.3, axis="y")
-
-    # Plot 2: Mean vs Harmonic Mean (shows quality consistency)
-    for preset in sorted(df["preset"].unique()):
-        preset_data = df[df["preset"] == preset]
-        axes[1].scatter(
-            preset_data["vmaf_mean"],
-            preset_data["vmaf_harmonic_mean"],
-            label=f"Preset {preset}",
-            s=100,
-            alpha=0.7,
-        )
-
-    # Add diagonal line (mean = harmonic mean would be perfect consistency)
-    lims = [
-        max(axes[1].get_xlim()[0], axes[1].get_ylim()[0]),
-        min(axes[1].get_xlim()[1], axes[1].get_ylim()[1]),
+    # Metrics to compare per clip
+    clip_metrics = [
+        ("vmaf_mean", "VMAF Mean Score"),
+        ("vmaf_per_bpp", "VMAF per bpp"),
+        ("bpp", "Bitrate per Pixel"),
     ]
-    axes[1].plot(lims, lims, "k--", alpha=0.3, linewidth=1)
 
-    axes[1].set_xlabel("VMAF Mean Score")
-    axes[1].set_ylabel("VMAF Harmonic Mean Score")
-    axes[1].set_title(f"{study_name}: Quality Consistency")
-    axes[1].legend()
-    axes[1].grid(True, alpha=0.3)
+    colors = get_line_colors(len(clips))
 
-    plt.tight_layout()
-    output_path = output_dir / f"{study_name}_vmaf_distribution.png"
-    plt.savefig(output_path, dpi=300, bbox_inches="tight")
-    print(f"Saved: {output_path}")
-    plt.close()
+    for metric, metric_label in clip_metrics:
+        if metric not in df.columns:
+            continue
+
+        # Aggregate by clip and preset (mean over CRF values)
+        clip_data = df.groupby(["source_clip", "preset"])[metric].mean().reset_index()
+
+        fig, ax = plt.subplots(figsize=(10, 7))
+
+        for clip, color in zip(clips, colors, strict=True):
+            subset = clip_data[clip_data["source_clip"] == clip].sort_values("preset")
+            if subset.empty:
+                continue
+            # Shorten clip name for legend
+            clip_short = clip.replace(".mp4", "").replace(".mkv", "")
+            ax.plot(
+                subset["preset"],
+                subset[metric],
+                marker="o",
+                linewidth=2,
+                markersize=8,
+                label=clip_short,
+                color=color,
+            )
+
+        ax.set_xlabel("Preset (lower = slower, higher quality)")
+        ax.set_ylabel(metric_label)
+        ax.set_title(f"{study_name}: {metric_label} by Clip vs Preset")
+        ax.legend(title="Clip", loc="best", fontsize=8)
+        ax.grid(True, alpha=0.3)
+        ax.set_xticks(sorted(df["preset"].unique()))
+
+        output_path = output_dir / f"{study_name}_clip_{metric}.png"
+        plt.savefig(output_path)
+        print(f"  Saved: {output_path}")
+        plt.close(fig)
 
 
 def export_csv(df: pd.DataFrame, output_dir: Path, study_name: str) -> None:
-    """Export dataframe to CSV for further analysis."""
-    output_path = output_dir / f"{study_name}_analysis.csv"
+    """Export raw dataframe to CSV for further analysis."""
+    output_path = output_dir / f"{study_name}_raw_data.csv"
+    df.to_csv(output_path, index=False)
+    print(f"Saved: {output_path}")
+
+
+def export_aggregated_csv(df: pd.DataFrame, output_dir: Path, study_name: str) -> None:
+    """Export aggregated dataframe to CSV."""
+    output_path = output_dir / f"{study_name}_aggregated.csv"
     df.to_csv(output_path, index=False)
     print(f"Saved: {output_path}")
 
 
 def generate_summary_report(
     df: pd.DataFrame,
+    agg_df: pd.DataFrame,
     analysis_data: dict[str, Any],
     output_dir: Path,
     study_name: str,
 ) -> None:
-    """Generate a text summary report."""
+    """Generate a text summary report with key findings."""
     report_path = output_dir / f"{study_name}_report.txt"
 
     with open(report_path, "w", encoding="utf-8") as f:
@@ -723,6 +481,8 @@ def generate_summary_report(
         f.write("=" * 80 + "\n\n")
 
         # Study metadata
+        f.write("Study Metadata\n")
+        f.write("-" * 40 + "\n")
         f.write(f"Analysis Date: {analysis_data['analysis_date']}\n")
         f.write(f"VMAF Model: {analysis_data['vmaf_model']}\n")
         f.write(f"Clips Analyzed: {analysis_data['clips_analyzed']}\n")
@@ -730,84 +490,55 @@ def generate_summary_report(
         f.write(f"Metrics: {', '.join(analysis_data['metrics_calculated']).upper()}\n")
         f.write("\n")
 
-        # Overall statistics
-        f.write("Overall Statistics\n")
-        f.write("-" * 80 + "\n")
-        f.write(f"VMAF Mean Range: {df['vmaf_mean'].min():.2f} - {df['vmaf_mean'].max():.2f}\n")
-        f.write(
-            f"File Size Range: {df['file_size_mb'].min():.2f} - {df['file_size_mb'].max():.2f} MB\n"
-        )
-        if "encoding_time_s" in df.columns:
-            f.write(
-                f"Encoding Time Range: {df['encoding_time_s'].min():.2f} - "
-                f"{df['encoding_time_s'].max():.2f} seconds\n"
-            )
+        # Parameter ranges
+        f.write("Parameter Ranges\n")
+        f.write("-" * 40 + "\n")
+        f.write(f"Presets: {sorted(int(p) for p in df['preset'].unique())}\n")
+        f.write(f"CRF values: {sorted(int(c) for c in df['crf'].unique())}\n")
+        f.write("\n")
+
+        # Key statistics (aggregated across clips)
+        f.write("Aggregated Statistics (Mean Across Clips)\n")
+        f.write("-" * 40 + "\n")
+
+        for metric, label, _ in METRICS:
+            if metric in agg_df.columns and not agg_df[metric].isna().all():
+                min_val = agg_df[metric].min()
+                max_val = agg_df[metric].max()
+                f.write(f"{label}:\n")
+                f.write(f"  Range: {min_val:.3f} - {max_val:.3f}\n")
+
         f.write("\n")
 
         # Best configurations
-        f.write("Best Configurations\n")
-        f.write("-" * 80 + "\n")
+        f.write("Best Configurations (Aggregated)\n")
+        f.write("-" * 40 + "\n")
 
-        best_quality = df.loc[df["vmaf_mean"].idxmax()]
-        f.write("Highest Quality:\n")
-        f.write(f"  Preset: {int(best_quality['preset'])}, CRF: {int(best_quality['crf'])}\n")
-        f.write(f"  VMAF: {best_quality['vmaf_mean']:.2f}\n")
-        f.write(f"  File Size: {best_quality['file_size_mb']:.2f} MB\n")
-        f.write(f"  Encoding Time: {best_quality['encoding_time_s']:.2f}s\n")
-        f.write("\n")
-
-        if "vmaf_per_mb" in df.columns:
-            best_efficiency = df.loc[df["vmaf_per_mb"].idxmax()]
-            f.write("Best Efficiency (VMAF per MB):\n")
-            f.write(
-                f"  Preset: {int(best_efficiency['preset'])}, CRF: {int(best_efficiency['crf'])}\n"
-            )
-            f.write(f"  VMAF: {best_efficiency['vmaf_mean']:.2f}\n")
-            f.write(f"  VMAF per MB: {best_efficiency['vmaf_per_mb']:.2f}\n")
-            f.write(f"  File Size: {best_efficiency['file_size_mb']:.2f} MB\n")
+        if "vmaf_mean" in agg_df.columns:
+            best = agg_df.loc[agg_df["vmaf_mean"].idxmax()]
+            f.write("Highest VMAF Mean:\n")
+            f.write(f"  Preset {int(best['preset'])}, CRF {int(best['crf'])}\n")
+            f.write(f"  VMAF: {best['vmaf_mean']:.2f}\n")
+            if "bpp" in agg_df.columns:
+                f.write(f"  bpp: {best['bpp']:.4f}\n")
             f.write("\n")
 
-        smallest_file = df.loc[df["file_size_mb"].idxmin()]
-        f.write("Smallest File:\n")
-        f.write(f"  Preset: {int(smallest_file['preset'])}, CRF: {int(smallest_file['crf'])}\n")
-        f.write(f"  VMAF: {smallest_file['vmaf_mean']:.2f}\n")
-        f.write(f"  File Size: {smallest_file['file_size_mb']:.2f} MB\n")
-        f.write("\n")
+        if "vmaf_per_bpp" in agg_df.columns and not agg_df["vmaf_per_bpp"].isna().all():
+            best = agg_df.loc[agg_df["vmaf_per_bpp"].idxmax()]
+            f.write("Best Quality Efficiency (VMAF per bpp):\n")
+            f.write(f"  Preset {int(best['preset'])}, CRF {int(best['crf'])}\n")
+            f.write(f"  VMAF per bpp: {best['vmaf_per_bpp']:.2f}\n")
+            f.write(f"  VMAF: {best['vmaf_mean']:.2f}, bpp: {best['bpp']:.4f}\n")
+            f.write("\n")
 
-        # Parameter impact summary
-        f.write("Parameter Impact Summary\n")
-        f.write("-" * 80 + "\n")
-
-        preset_stats = (
-            df.groupby("preset")
-            .agg(
-                {
-                    "vmaf_mean": ["mean", "std"],
-                    "file_size_mb": ["mean", "std"],
-                    "encoding_time_s": ["mean", "std"],
-                }
-            )
-            .round(2)
-        )
-
-        f.write("\nBy Preset:\n")
-        f.write(preset_stats.to_string())
-        f.write("\n\n")
-
-        crf_stats = (
-            df.groupby("crf")
-            .agg(
-                {
-                    "vmaf_mean": ["mean", "std"],
-                    "file_size_mb": ["mean", "std"],
-                }
-            )
-            .round(2)
-        )
-
-        f.write("By CRF:\n")
-        f.write(crf_stats.to_string())
-        f.write("\n")
+        if "bpp" in agg_df.columns:
+            smallest = agg_df.loc[agg_df["bpp"].idxmin()]
+            f.write("Lowest Bitrate (bpp):\n")
+            f.write(f"  Preset {int(smallest['preset'])}, CRF {int(smallest['crf'])}\n")
+            f.write(f"  bpp: {smallest['bpp']:.4f}\n")
+            if "vmaf_mean" in agg_df.columns:
+                f.write(f"  VMAF: {smallest['vmaf_mean']:.2f}\n")
+            f.write("\n")
 
     print(f"Saved: {report_path}")
 
@@ -822,21 +553,21 @@ Examples:
   # Analyze baseline_sweep study with all plots
   %(prog)s baseline_sweep
 
-  # Analyze with custom output directory
-  %(prog)s baseline_sweep --output results/baseline_analysis
+  # Analyze specific metrics only
+  %(prog)s baseline_sweep --metrics vmaf_mean vmaf_per_bpp
 
-  # Only generate specific plot types
-  %(prog)s baseline_sweep --plots rate-distortion speed-quality
+  # Skip per-clip comparison plots
+  %(prog)s baseline_sweep --no-clip-plots
 
-Available plot types:
-  - rate-distortion: VMAF vs bitrate/file size curves
-  - storage-efficiency: VMAF per MB and time investment for storage use cases
-  - multimetric-comparison: Compare VMAF, PSNR, and SSIM metrics
-  - speed-quality: Encoding time vs quality tradeoffs
-  - parameter-impact: Heatmaps of parameter effects
-  - clip-comparison: Per-clip quality comparison
-  - vmaf-distribution: VMAF score distributions and consistency
-  - all: Generate all plots (default)
+Available metrics:
+  vmaf_mean           - VMAF Mean Score
+  vmaf_p5             - VMAF 5th Percentile (worst frames)
+  vmaf_p95            - VMAF 95th Percentile (best frames)
+  bpp                 - Bitrate per Pixel
+  vmaf_per_bpp        - VMAF per bpp (quality efficiency)
+  encoding_time_s     - Encoding Time
+  vmaf_per_time       - VMAF per Encoding Second
+  vmaf_per_bpp_per_time - Combined efficiency metric
         """,
     )
 
@@ -860,20 +591,16 @@ Available plot types:
     )
 
     parser.add_argument(
-        "--plots",
+        "--metrics",
         nargs="+",
-        choices=[
-            "rate-distortion",
-            "storage-efficiency",
-            "multimetric-comparison",
-            "speed-quality",
-            "parameter-impact",
-            "clip-comparison",
-            "vmaf-distribution",
-            "all",
-        ],
-        default=["all"],
-        help="Which plots to generate (default: all)",
+        choices=[m[0] for m in METRICS],
+        help="Which metrics to plot (default: all)",
+    )
+
+    parser.add_argument(
+        "--no-clip-plots",
+        action="store_true",
+        help="Skip per-clip comparison plots",
     )
 
     parser.add_argument(
@@ -897,7 +624,7 @@ Available plot types:
         print("\nAvailable studies:", file=sys.stderr)
         if args.encoded_dir.exists():
             for d in args.encoded_dir.iterdir():
-                if d.is_dir() and (d / "analysis_metadata.json").exists():
+                if d.is_dir():
                     print(f"  - {d.name}", file=sys.stderr)
         sys.exit(1)
 
@@ -913,7 +640,7 @@ Available plot types:
 
     print(f"Analyzing study: {args.study_name}")
     print(f"Reading: {analysis_file}")
-    print(f"Output directory: {output_dir}\n")
+    print(f"Output directory: {output_dir}")
 
     # Load data
     analysis_data = load_json(analysis_file)
@@ -923,46 +650,40 @@ Available plot types:
         print("Error: No successful encodings found in analysis", file=sys.stderr)
         sys.exit(1)
 
-    print(f"Loaded {len(df)} successful encodings\n")
+    print(f"Loaded {len(df)} successful encodings")
+    print(f"Clips: {df['source_clip'].nunique()}")
+    print(f"Presets: {sorted(df['preset'].unique())}")
+    print(f"CRF values: {sorted(df['crf'].unique())}")
 
-    # Determine which plots to generate
-    plot_types = args.plots
-    if "all" in plot_types:
-        plot_types = [
-            "rate-distortion",
-            "storage-efficiency",
-            "multimetric-comparison",
-            "speed-quality",
-            "parameter-impact",
-            "clip-comparison",
-            "vmaf-distribution",
-        ]
+    # Aggregate by parameters (mean across clips)
+    agg_df = aggregate_by_params(df)
+    print(f"Aggregated to {len(agg_df)} parameter combinations")
 
-    # Generate plots
-    plot_functions = {
-        "rate-distortion": plot_rate_distortion,
-        "storage-efficiency": plot_storage_efficiency,
-        "multimetric-comparison": plot_multimetric_comparison,
-        "speed-quality": plot_speed_quality_tradeoff,
-        "parameter-impact": plot_parameter_impact,
-        "clip-comparison": plot_clip_comparison,
-        "vmaf-distribution": plot_vmaf_distribution,
-    }
+    # Determine which metrics to plot
+    metrics_to_plot = args.metrics or [m[0] for m in METRICS]
+    metric_info = {m[0]: (m[1], m[2]) for m in METRICS}
 
-    for plot_type in plot_types:
-        if plot_type in plot_functions:
-            print(f"Generating {plot_type} plot...")
-            plot_functions[plot_type](df, output_dir, args.study_name)
+    # Generate metric trio plots (heatmap + 2 line charts)
+    for metric in metrics_to_plot:
+        if metric in metric_info:
+            label, higher_is_better = metric_info[metric]
+            plot_metric_trio(agg_df, metric, label, output_dir, args.study_name, higher_is_better)
+
+    # Per-clip comparison plots (optional)
+    if not args.no_clip_plots:
+        print("\nGenerating per-clip comparison plots...")
+        plot_clip_comparison(df, output_dir, args.study_name)
 
     # Export CSV
     if not args.no_csv:
-        print("\nExporting CSV...")
+        print("\nExporting CSV files...")
         export_csv(df, output_dir, args.study_name)
+        export_aggregated_csv(agg_df, output_dir, args.study_name)
 
     # Generate summary report
     if not args.no_report:
         print("\nGenerating summary report...")
-        generate_summary_report(df, analysis_data, output_dir, args.study_name)
+        generate_summary_report(df, agg_df, analysis_data, output_dir, args.study_name)
 
     print(f"\n✅ Analysis complete! Results in: {output_dir}")
 
