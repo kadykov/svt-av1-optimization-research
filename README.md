@@ -137,10 +137,12 @@ just clean-results
 ```
 
 **Available plot types:**
-- `rate-distortion`: VMAF vs bitrate/file size curves
+- `rate-distortion`: VMAF vs bitrate per pixel (bpp) curves - resolution-normalized
+- `storage-efficiency`: VMAF per bpp vs encoding parameters for archival use cases
+- `multimetric-comparison`: Compare VMAF, PSNR, and SSIM vs bpp side-by-side
 - `speed-quality`: Encoding time vs quality tradeoffs
-- `parameter-impact`: Heatmaps showing preset/CRF effects
-- `clip-comparison`: Per-clip quality differences
+- `parameter-impact`: Heatmaps showing preset/CRF effects on quality and efficiency
+- `clip-comparison`: Per-clip quality and bpp differences
 - `vmaf-distribution`: Quality consistency analysis
 
 ### Cleanup

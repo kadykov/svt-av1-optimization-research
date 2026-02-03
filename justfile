@@ -129,6 +129,14 @@ visualize-to STUDY OUTPUT_DIR *ARGS:
 visualize-plots STUDY *PLOTS:
     . venv/bin/activate && python scripts/visualize_study.py {{STUDY}} --plots {{PLOTS}}
 
+# Generate storage efficiency analysis (VMAF per MB, time investment)
+visualize-storage STUDY:
+    . venv/bin/activate && python scripts/visualize_study.py {{STUDY}} --plots storage-efficiency
+
+# Generate multi-metric comparison (VMAF, PSNR, SSIM)
+visualize-metrics STUDY:
+    . venv/bin/activate && python scripts/visualize_study.py {{STUDY}} --plots multimetric-comparison
+
 # Clean extracted clips (removes videos and generated metadata, keeps schemas)
 clean-clips:
     find data/test_clips -type f \( -name '*.mp4' -o -name '*.mkv' -o -name '*.webm' -o -name '*.mov' -o -name '*.avi' \) -delete
