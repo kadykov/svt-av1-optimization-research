@@ -250,8 +250,9 @@ def build_ffmpeg_command(input_file: Path, output_file: Path, params: dict[str, 
     if svt_params:
         cmd.extend(["-svtav1-params", ":".join(svt_params)])
 
-    # Copy audio without re-encoding
-    cmd.extend(["-c:a", "copy"])
+    # Remove audio streams (we only need video for quality analysis)
+    # This reduces file size and ensures accurate video-only bitrate calculation
+    cmd.extend(["-an"])
 
     # Overwrite output file
     cmd.extend(["-y", str(output_file)])
@@ -306,8 +307,9 @@ def encode_clip(
         result["file_size_bytes"] = output_path.stat().st_size
         result["sha256"] = calculate_sha256(output_path)
 
-        # Calculate bitrate (need clip duration - get from clip metadata)
-        # For now, leave as null - can be calculated in analysis phase
+        # Duration will be calculated during analysis phase
+        result["duration_seconds"] = None
+        # Bitrate will be calculated during analysis phase
         result["bitrate_kbps"] = None
 
         result["timestamp"] = datetime.now(UTC).isoformat().replace("+00:00", "Z")

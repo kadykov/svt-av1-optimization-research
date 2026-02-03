@@ -101,6 +101,7 @@ Automatically calculated for each encoding:
 1. **VMAF per kbps**: Quality per unit of bitrate
    - Higher is better (more quality per bandwidth)
    - Key metric for finding optimal parameters
+   - Uses video-only bitrate (extracted via FFprobe)
 
 2. **VMAF per megabyte**: Quality per unit of file size
    - Higher is better (more quality per storage)
@@ -109,6 +110,20 @@ Automatically calculated for each encoding:
 3. **Quality per encoding second**: Quality divided by encoding time
    - Higher is better (more quality per compute time)
    - Useful for speed/quality tradeoffs
+
+### Bitrate Calculation
+
+The analysis script calculates **video-only bitrate** using FFprobe:
+- Extracts actual video stream bitrate (kbps)
+- Excludes audio streams and container overhead
+- More accurate than file size / duration calculations
+- Required for proper bpp (bitrate per pixel) metrics in visualization
+
+**Note**: Encodings are done without audio (`-an` flag) to:
+- Focus on video codec performance
+- Ensure accurate bitrate measurements
+- Reduce file sizes and encoding time
+- Eliminate audio encoding as a confounding variable
 
 ## Usage Examples
 

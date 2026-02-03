@@ -32,6 +32,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from utils import get_video_bitrate
+
 
 def load_encoding_metadata(study_dir: Path) -> dict[str, Any]:
     """Load encoding metadata for a study."""
@@ -501,6 +503,11 @@ def analyze_encoding(
 
     start_time = time.time()
 
+    # Calculate bitrate from encoded file (video stream only)
+    bitrate_kbps = get_video_bitrate(encoded_file)
+    if bitrate_kbps is None:
+        print("  Warning: Could not determine video bitrate")
+
     # Calculate metrics
     result = {
         "output_file": output_file,
@@ -508,8 +515,8 @@ def analyze_encoding(
         "parameters": encoding["parameters"],
         "metrics": {},
         "file_size_bytes": encoding["file_size_bytes"],
-        "bitrate_kbps": encoding.get("bitrate_kbps"),
-        "duration_seconds": encoding.get("duration_seconds"),
+        "bitrate_kbps": bitrate_kbps,
+        "duration_seconds": encoded_duration,
         "source_duration_seconds": source_duration,
         "encoded_duration_seconds": encoded_duration,
         "encoding_time_seconds": encoding.get("encoding_time_seconds"),

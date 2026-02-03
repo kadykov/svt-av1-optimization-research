@@ -7,7 +7,7 @@ requiring external dependencies like FFmpeg.
 
 from pathlib import Path
 
-from utils import calculate_sha256
+from utils import calculate_sha256, get_video_bitrate
 
 
 class TestCalculateSHA256:
@@ -85,3 +85,42 @@ class TestCalculateSHA256:
         # Should handle binary data correctly
         assert len(result) == 64
         assert all(c in "0123456789abcdef" for c in result)
+
+
+class TestGetVideoBitrate:
+    """Tests for the get_video_bitrate utility function."""
+
+    def test_get_video_bitrate_with_fixture(self):
+        """Test bitrate extraction using the fixture video file."""
+        fixture_path = Path(__file__).parent.parent / "fixtures" / "test_video.mp4"
+
+        if not fixture_path.exists():
+            # Skip test if fixture doesn't exist
+            return
+
+        bitrate = get_video_bitrate(fixture_path)
+
+        # Should return a positive bitrate value
+        assert bitrate is not None
+        assert bitrate > 0
+        # Typical video bitrates are in reasonable range (10 kbps - 100 Mbps)
+        assert 10 < bitrate < 100_000
+
+    def test_get_video_bitrate_nonexistent_file(self):
+        """Test bitrate extraction with non-existent file."""
+        nonexistent = Path("/tmp/nonexistent_video.mp4")
+
+        bitrate = get_video_bitrate(nonexistent)
+
+        # Should return None for missing file
+        assert bitrate is None
+
+    def test_get_video_bitrate_invalid_file(self, tmp_path: Path):
+        """Test bitrate extraction with invalid video file."""
+        invalid_file = tmp_path / "not_a_video.txt"
+        invalid_file.write_text("This is not a video file")
+
+        bitrate = get_video_bitrate(invalid_file)
+
+        # Should return None for invalid video
+        assert bitrate is None

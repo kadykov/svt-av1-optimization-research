@@ -226,7 +226,7 @@
           },
           "bitrate_kbps": {
             "type": "number",
-            "description": "Average bitrate in kbps",
+            "description": "Video stream bitrate in kbps (video-only, excluding audio and container overhead)",
             "minimum": 0
           },
           "duration_seconds": {

@@ -90,14 +90,11 @@ def prepare_dataframe(analysis_data: dict[str, Any]) -> pd.DataFrame:
         height = clip_info.get("source_height", 0)
         fps = clip_info.get("source_fps", 0)
 
-        # Calculate duration and bitrate if not available
-        duration_s = encoding.get("source_duration_seconds", 0)
+        # Get bitrate and file size from encoding
         file_size_bytes = encoding["file_size_bytes"]
 
-        # Calculate bitrate if not present
+        # Bitrate should come from analysis metadata
         bitrate_kbps = encoding.get("bitrate_kbps")
-        if bitrate_kbps is None and duration_s > 0:
-            bitrate_kbps = (file_size_bytes * 8) / (duration_s * 1000)
 
         # Calculate bitrate per pixel (bpp) - normalized metric
         # bpp = bitrate / (width * height * fps)
@@ -166,15 +163,15 @@ def prepare_dataframe(analysis_data: dict[str, Any]) -> pd.DataFrame:
 
     df = pd.DataFrame(rows)
 
-    # Calculate bitrate if not present (estimate from file size)
-    # Assuming typical clip duration, this is rough
-    if not df.empty and df["bitrate_kbps"].isna().all():
+    # Bitrate should be calculated during analysis phase
+    # If missing, we cannot accurately calculate bpp
+    if not df.empty and df["bitrate_kbps"].isna().any():
+        missing_count = df["bitrate_kbps"].isna().sum()
         print(
-            "Warning: bitrate_kbps not available, using file size as proxy",
+            f"Warning: {missing_count} encodings missing bitrate data. "
+            "Re-run analysis to calculate bitrates.",
             file=sys.stderr,
         )
-        # Normalize by file size instead
-        df["bitrate_proxy"] = df["file_size_mb"]
 
     return df
 

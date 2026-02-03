@@ -177,6 +177,8 @@ just clean-videos         # Remove all video files (raw + clips + encoded)
 - ✅ Automatic parameter combination generation
 - ✅ Intelligent progress tracking with ETA based on video complexity
 - ✅ Encoding time and resource tracking
+- ✅ Video-only encoding (no audio) for accurate bitrate measurements
+- ✅ Automatic video bitrate calculation using FFprobe
 - ✅ SHA256 checksums for encoded files
 - ✅ Detailed metadata with system info
 - ✅ Continue-on-error for resilient batch encoding
