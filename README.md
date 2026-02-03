@@ -175,6 +175,7 @@ just clean-videos         # Remove all video files (raw + clips + encoded)
 ### Encoding Studies
 - ✅ Study-based configuration system (focused parameter sweeps)
 - ✅ Automatic parameter combination generation
+- ✅ Intelligent progress tracking with ETA based on video complexity
 - ✅ Encoding time and resource tracking
 - ✅ SHA256 checksums for encoded files
 - ✅ Detailed metadata with system info
@@ -186,6 +187,7 @@ just clean-videos         # Remove all video files (raw + clips + encoded)
 - ✅ VMAF (NEG mode) - Netflix's perceptual quality metric for codec evaluation
 - ✅ PSNR - Traditional pixel difference metric
 - ✅ SSIM - Structural similarity metric
+- ✅ Real-time progress tracking with accurate ETA estimates
 - ✅ Efficiency metrics (VMAF per kbps, quality per encoding second)
 - ✅ Comprehensive statistics (mean, harmonic mean, percentiles)
 - ✅ FFmpeg integration (no additional dependencies)
@@ -293,6 +295,7 @@ Studies are focused parameter sweeps stored in `config/studies/`:
 - **[docs/WORKFLOW_EXAMPLE.md](docs/WORKFLOW_EXAMPLE.md)** - Complete end-to-end workflow example
 - **[docs/ANALYSIS_GUIDE.md](docs/ANALYSIS_GUIDE.md)** - Quality metrics system (VMAF, PSNR, SSIM)
 - **[docs/VISUALIZATION_GUIDE.md](docs/VISUALIZATION_GUIDE.md)** - Analysis and plotting system
+- **[docs/PROGRESS_TRACKING.md](docs/PROGRESS_TRACKING.md)** - Progress tracking and ETA estimation
 - **[docs/VMAF_NOTES.md](docs/VMAF_NOTES.md)** - Why we use VMAF NEG mode for codec evaluation
 - **[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)** - Common issues and solutions
 

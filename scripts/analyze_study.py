@@ -63,23 +63,85 @@ def find_source_clip(clip_name: str, clips_dir: Path) -> Path | None:
     return None
 
 
-def get_video_duration(video_path: Path) -> float | None:
-    """Get video duration in seconds using FFprobe."""
+def get_video_info(video_path: Path) -> dict[str, Any] | None:
+    """Get video information (duration, frame count, resolution) using FFprobe."""
     try:
         cmd = [
             "ffprobe",
             "-v",
             "error",
+            "-select_streams",
+            "v:0",
             "-show_entries",
-            "format=duration",
+            "stream=width,height,nb_frames,r_frame_rate:format=duration",
             "-of",
-            "default=noprint_wrappers=1:nokey=1",
+            "json",
             str(video_path),
         ]
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-        return float(result.stdout.strip())
-    except (subprocess.CalledProcessError, ValueError):
+        data = json.loads(result.stdout)
+
+        stream = data.get("streams", [{}])[0]
+        format_info = data.get("format", {})
+
+        # Parse frame rate (e.g., "30/1" -> 30.0)
+        frame_rate_str = stream.get("r_frame_rate", "0/1")
+        num, denom = map(int, frame_rate_str.split("/"))
+        frame_rate = num / denom if denom > 0 else 0
+
+        # Get frame count (may not be available for all formats)
+        nb_frames = stream.get("nb_frames")
+        if nb_frames:
+            frame_count = int(nb_frames)
+        else:
+            # Estimate from duration and frame rate
+            duration = float(format_info.get("duration", 0))
+            frame_count = int(duration * frame_rate) if duration > 0 else 0
+
+        return {
+            "width": int(stream.get("width", 0)),
+            "height": int(stream.get("height", 0)),
+            "frame_count": frame_count,
+            "frame_rate": frame_rate,
+            "duration": float(format_info.get("duration", 0)),
+        }
+    except (subprocess.CalledProcessError, ValueError, KeyError, json.JSONDecodeError):
         return None
+
+
+def get_video_duration(video_path: Path) -> float | None:
+    """Get video duration in seconds using FFprobe (simplified version)."""
+    info = get_video_info(video_path)
+    return info["duration"] if info else None
+
+
+def calculate_work_units(video_info: dict[str, Any]) -> int:
+    """Calculate work units for a video based on frame count and resolution.
+
+    Work units = frame_count * width * height
+    This gives a rough measure of encoding/analysis complexity.
+    """
+    if not video_info:
+        return 0
+
+    frame_count = video_info.get("frame_count", 0)
+    width = video_info.get("width", 0)
+    height = video_info.get("height", 0)
+
+    return int(frame_count * width * height)
+
+
+def format_time_remaining(seconds: float) -> str:
+    """Format seconds into human-readable time (e.g., '2h 15m', '45s')."""
+    if seconds < 60:
+        return f"{int(seconds)}s"
+    if seconds < 3600:
+        minutes = int(seconds / 60)
+        secs = int(seconds % 60)
+        return f"{minutes}m {secs}s"
+    hours = int(seconds / 3600)
+    minutes = int((seconds % 3600) / 60)
+    return f"{hours}h {minutes}m"
 
 
 def calculate_vmaf(
@@ -677,12 +739,59 @@ Examples:
     unique_clips = {e["source_clip"] for e in successful_encodings}
     print(f"Unique source clips: {len(unique_clips)}")
 
+    # Calculate work units for progress tracking
+    print("\nCalculating analysis workload...")
+    clip_work_units = {}
+    total_work_units = 0
+
+    for clip_name in unique_clips:
+        source_clip = find_source_clip(clip_name, args.clips_dir)
+        if source_clip:
+            video_info = get_video_info(source_clip)
+            if video_info:
+                work_units = calculate_work_units(video_info)
+                clip_work_units[clip_name] = work_units
+                if args.verbose:
+                    print(
+                        f"  {clip_name}: {work_units:,} work units ({video_info['frame_count']} frames, {video_info['width']}x{video_info['height']})"
+                    )
+            else:
+                clip_work_units[clip_name] = 1_000_000
+        else:
+            clip_work_units[clip_name] = 1_000_000
+
+    # Calculate total work (each encoding processes one clip)
+    for encoding in successful_encodings:
+        total_work_units += clip_work_units.get(encoding["source_clip"], 1_000_000)
+
+    print(
+        f"Total workload: {total_work_units:,} work units across {len(successful_encodings)} encodings"
+    )
+
     # Analyze each encoding
     analysis_results = []
     failed_count = 0
+    completed_work_units = 0
+    overall_start_time = time.time()
 
     for i, encoding in enumerate(successful_encodings, 1):
-        print(f"\n[{i}/{len(successful_encodings)}]", end=" ")
+        # Calculate progress
+        progress_pct = (
+            (completed_work_units / total_work_units * 100) if total_work_units > 0 else 0
+        )
+        elapsed = time.time() - overall_start_time
+
+        # Estimate time remaining
+        if completed_work_units > 0:
+            avg_time_per_unit = elapsed / completed_work_units
+            remaining_units = total_work_units - completed_work_units
+            eta_seconds = avg_time_per_unit * remaining_units
+            eta_str = format_time_remaining(eta_seconds)
+            progress_str = f"[{progress_pct:.1f}%, ETA: {eta_str}]"
+        else:
+            progress_str = "[0.0%]"
+
+        print(f"\n[{i}/{len(successful_encodings)}] {progress_str}", end=" ")
 
         try:
             result = analyze_encoding(
@@ -694,6 +803,10 @@ Examples:
                 verbose=args.verbose,
             )
             analysis_results.append(result)
+
+            # Update completed work units
+            clip_work = clip_work_units.get(encoding["source_clip"], 1_000_000)
+            completed_work_units += clip_work
 
             if not result["success"]:
                 failed_count += 1

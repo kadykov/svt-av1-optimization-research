@@ -74,6 +74,81 @@ def get_system_info() -> dict[str, Any]:
     return info
 
 
+def get_video_info(video_path: Path) -> dict[str, Any] | None:
+    """Get video information (duration, frame count, resolution) using FFprobe."""
+    try:
+        cmd = [
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=width,height,nb_frames,r_frame_rate:format=duration",
+            "-of",
+            "json",
+            str(video_path),
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        data = json.loads(result.stdout)
+
+        stream = data.get("streams", [{}])[0]
+        format_info = data.get("format", {})
+
+        # Parse frame rate (e.g., "30/1" -> 30.0)
+        frame_rate_str = stream.get("r_frame_rate", "0/1")
+        num, denom = map(int, frame_rate_str.split("/"))
+        frame_rate = num / denom if denom > 0 else 0
+
+        # Get frame count (may not be available for all formats)
+        nb_frames = stream.get("nb_frames")
+        if nb_frames:
+            frame_count = int(nb_frames)
+        else:
+            # Estimate from duration and frame rate
+            duration = float(format_info.get("duration", 0))
+            frame_count = int(duration * frame_rate) if duration > 0 else 0
+
+        return {
+            "width": int(stream.get("width", 0)),
+            "height": int(stream.get("height", 0)),
+            "frame_count": frame_count,
+            "frame_rate": frame_rate,
+            "duration": float(format_info.get("duration", 0)),
+        }
+    except (subprocess.CalledProcessError, ValueError, KeyError, json.JSONDecodeError):
+        return None
+
+
+def calculate_work_units(video_info: dict[str, Any]) -> int:
+    """Calculate work units for a video based on frame count and resolution.
+
+    Work units = frame_count * width * height
+    This gives a rough measure of encoding/analysis complexity.
+    """
+    if not video_info:
+        return 0
+
+    frame_count = video_info.get("frame_count", 0)
+    width = video_info.get("width", 0)
+    height = video_info.get("height", 0)
+
+    return int(frame_count * width * height)
+
+
+def format_time_remaining(seconds: float) -> str:
+    """Format seconds into human-readable time (e.g., '2h 15m', '45s')."""
+    if seconds < 60:
+        return f"{int(seconds)}s"
+    if seconds < 3600:
+        minutes = int(seconds / 60)
+        secs = int(seconds % 60)
+        return f"{minutes}m {secs}s"
+    hours = int(seconds / 3600)
+    minutes = int((seconds % 3600) / 60)
+    return f"{hours}h {minutes}m"
+
+
 def normalize_param_value(value: Any) -> list[Any]:
     """Convert single value or array to list for uniform handling."""
     if isinstance(value, list):
@@ -396,20 +471,69 @@ def main():
         "encodings": [],
     }
 
-    # Encode all clips with all parameter combinations
-    print(f"\nStarting encoding ({total_encodings} total)...")
-    completed = 0
-    failed = 0
+    # Calculate work units for progress tracking
+    print("\nCalculating encoding workload...")
+    clip_work_units = {}
+    total_work_units = 0
 
     for clip in clips:
-        print(f"\nClip: {clip.name}")
+        video_info = get_video_info(clip)
+        if video_info:
+            work_units = calculate_work_units(video_info)
+            clip_work_units[clip.name] = work_units
+            total_work_units += work_units * len(
+                param_combos
+            )  # Each param combo processes the clip
+            if args.verbose:
+                print(
+                    f"  {clip.name}: {work_units:,} work units ({video_info['frame_count']} frames, {video_info['width']}x{video_info['height']})"
+                )
+        else:
+            # Fallback: assume average complexity
+            clip_work_units[clip.name] = 1_000_000
+            total_work_units += 1_000_000 * len(param_combos)
 
-        for params in param_combos:
+    print(f"Total workload: {total_work_units:,} work units across {total_encodings} encodings")
+
+    # Encode all clips with all parameter combinations
+    print("\nStarting encoding...")
+    completed = 0
+    failed = 0
+    completed_work_units = 0
+    overall_start_time = time.time()
+
+    for clip_idx, clip in enumerate(clips, 1):
+        clip_work = clip_work_units.get(clip.name, 1_000_000)
+        print(f"\n[Clip {clip_idx}/{len(clips)}] {clip.name}")
+
+        for param_idx, params in enumerate(param_combos, 1):
             output_name = build_output_filename(clip.name, params)
             output_path = output_dir / output_name
 
             param_str = ", ".join(f"{k}={v}" for k, v in params.items())
-            print(f"  Encoding with {param_str}... ", end="", flush=True)
+
+            # Calculate and display progress
+
+            progress_pct = (
+                (completed_work_units / total_work_units * 100) if total_work_units > 0 else 0
+            )
+            elapsed = time.time() - overall_start_time
+
+            # Estimate time remaining based on work units completed
+            if completed_work_units > 0:
+                avg_time_per_unit = elapsed / completed_work_units
+                remaining_units = total_work_units - completed_work_units
+                eta_seconds = avg_time_per_unit * remaining_units
+                eta_str = format_time_remaining(eta_seconds)
+                progress_str = f"[{progress_pct:.1f}%, ETA: {eta_str}]"
+            else:
+                progress_str = "[0.0%]"
+
+            print(
+                f"  [{param_idx}/{len(param_combos)}] {progress_str} {param_str}... ",
+                end="",
+                flush=True,
+            )
 
             result = encode_clip(clip, output_path, params, verbose=args.verbose)
             metadata["encodings"].append(result)
@@ -420,9 +544,11 @@ def main():
                     f"{result['file_size_bytes'] / 1024 / 1024:.2f} MB)"
                 )
                 completed += 1
+                completed_work_units += clip_work
             else:
                 print(f"✗ {result['error']}")
                 failed += 1
+                completed_work_units += clip_work  # Count failed ones too for progress tracking
 
                 if not args.continue_on_error:
                     print(
