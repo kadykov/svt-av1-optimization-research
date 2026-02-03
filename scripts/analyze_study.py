@@ -109,6 +109,16 @@ def calculate_vmaf(
     try:
         # Build FFmpeg command for VMAF calculation
         # Format: ffmpeg -i distorted -i reference -lavfi libvmaf -f null -
+        # NOTE: We use setpts=PTS-STARTPTS to reset timestamps to 0 for both streams.
+        # This is critical because:
+        # 1. Source clips extracted with -c copy may have non-zero start times
+        # 2. Encoded files may have different start times than sources
+        # 3. Without alignment, libvmaf compares wrong frames, giving incorrect scores
+        filter_complex = (
+            f"[0:v]setpts=PTS-STARTPTS[dist];"
+            f"[1:v]setpts=PTS-STARTPTS[ref];"
+            f"[dist][ref]libvmaf=model={model}:log_path={log_file}:log_fmt=json:n_threads={threads}"
+        )
         cmd = [
             "ffmpeg",
             "-i",
@@ -116,7 +126,7 @@ def calculate_vmaf(
             "-i",
             str(reference),
             "-lavfi",
-            f"[0:v][1:v]libvmaf=model={model}:log_path={log_file}:log_fmt=json:n_threads={threads}",
+            filter_complex,
             "-f",
             "null",
             "-",
@@ -203,14 +213,34 @@ def calculate_psnr_ssim(
     if not calculate_psnr and not calculate_ssim:
         return None, None
 
-    # Build filter chain
-    filters = []
-    if calculate_psnr:
-        filters.append("[0:v][1:v]psnr=stats_file=-")
-    if calculate_ssim:
-        filters.append("[0:v][1:v]ssim=stats_file=-")
-
-    filter_chain = ";".join(filters)
+    # Build filter chain with timestamp alignment
+    # NOTE: We use setpts=PTS-STARTPTS to reset timestamps to 0 for both streams.
+    # This ensures proper frame-to-frame comparison even when source clips have
+    # non-zero start times (common with -c copy extraction).
+    #
+    # When calculating both PSNR and SSIM, we must use split filters to provide
+    # separate copies of each stream to each metric filter, since each filter
+    # consumes its input streams.
+    if calculate_psnr and calculate_ssim:
+        # Need to split both streams for both metrics
+        filter_chain = (
+            "[0:v]setpts=PTS-STARTPTS,split=2[dist1][dist2];"
+            "[1:v]setpts=PTS-STARTPTS,split=2[ref1][ref2];"
+            "[dist1][ref1]psnr=stats_file=-;"
+            "[dist2][ref2]ssim=stats_file=-"
+        )
+    elif calculate_psnr:
+        filter_chain = (
+            "[0:v]setpts=PTS-STARTPTS[dist];"
+            "[1:v]setpts=PTS-STARTPTS[ref];"
+            "[dist][ref]psnr=stats_file=-"
+        )
+    else:  # calculate_ssim only
+        filter_chain = (
+            "[0:v]setpts=PTS-STARTPTS[dist];"
+            "[1:v]setpts=PTS-STARTPTS[ref];"
+            "[dist][ref]ssim=stats_file=-"
+        )
 
     try:
         cmd = [
@@ -262,8 +292,10 @@ def calculate_psnr_ssim(
                     if verbose:
                         print(f"  Warning: Failed to parse PSNR: {e}")
 
-            if calculate_ssim and "SSIM" in line and "All:" in line:
+            if calculate_ssim and "SSIM" in line and "All:" in line and "[Parsed_ssim" in line:
                 # Example: [Parsed_ssim_0 @ 0x...] SSIM Y:0.982 U:0.991 V:0.990 All:0.985 (18.234)
+                # NOTE: We must check for "[Parsed_ssim" to avoid matching per-frame output lines
+                # which also contain "All:" but have format like "n:450 Y:0.967 ... All:0.968"
                 try:
                     parts = line.split("SSIM")[1].strip()
                     values = {}

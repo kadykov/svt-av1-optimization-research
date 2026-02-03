@@ -35,9 +35,23 @@ We use FFmpeg's libvmaf filter with the NEG model:
 
 ```bash
 ffmpeg -i encoded.mkv -i original.mkv \
-  -lavfi "[0:v][1:v]libvmaf=model=version=vmaf_v0.6.1neg:log_path=output.json:n_threads=4" \
+  -lavfi "[0:v]setpts=PTS-STARTPTS[a];[1:v]setpts=PTS-STARTPTS[b];[a][b]libvmaf=model=version=vmaf_v0.6.1neg:log_path=output.json:n_threads=4" \
   -f null -
 ```
+
+**Critical: Timestamp Alignment with `setpts=PTS-STARTPTS`**
+
+When clips are extracted using `-c copy` (stream copy), they often retain the
+original video's timestamps. This means a clip extracted from 2 minutes into
+a source video might start at PTS=120.0 instead of PTS=0.0. When the encoded
+version has different start timestamps, libvmaf compares wrong frames,
+resulting in:
+- Artificially low VMAF scores (often 10-60 instead of 90+)
+- VMAF scores that don't correlate with quality settings (CRF)
+- Frame scores of 0.0 scattered throughout
+
+The `setpts=PTS-STARTPTS` filter resets timestamps to start from 0, ensuring
+proper frame-to-frame alignment between source and encoded videos.
 
 Model specification: `version=vmaf_v0.6.1neg`
 - `vmaf_v0.6.1` is the model version
@@ -85,3 +99,46 @@ We also calculate:
 - AV1 codec evaluation methodology uses VMAF NEG
 - Alliance for Open Media testing framework uses VMAF NEG
 - FFmpeg libvmaf documentation: https://ffmpeg.org/ffmpeg-filters.html#libvmaf
+
+## Troubleshooting VMAF Issues
+
+### Low VMAF Scores That Don't Correlate with Quality Settings
+
+**Symptoms:**
+- VMAF scores of 10-60 regardless of CRF/quality settings
+- CRF 20 and CRF 40 produce nearly identical VMAF scores
+- Many frames have VMAF=0.0
+- High variance in frame scores (std_dev > 20)
+
+**Common Causes and Solutions:**
+
+1. **Timestamp Misalignment** (Most Common)
+   - Clips extracted with `-c copy` retain original timestamps
+   - Source starts at different PTS than encoded file
+   - **Fix:** Use `setpts=PTS-STARTPTS` in the filter graph
+
+2. **Frame Count Mismatch**
+   - Different number of frames in source vs encoded
+   - Can happen with variable frame rate sources
+   - **Check:** `ffprobe -count_frames -select_streams v:0 ...`
+
+3. **Resolution Mismatch**
+   - Source and encoded have different resolutions
+   - **Check:** `ffprobe -show_entries stream=width,height ...`
+
+4. **B-Frame Ordering Issues**
+   - H.264/H.265 sources with B-frames
+   - AV1 encoded without B-frames
+   - Usually handled correctly by FFmpeg decoder, but timestamp alignment helps
+
+### Validating VMAF Setup
+
+Run this sanity check to compare a source to itself (should be ~100):
+
+```bash
+ffmpeg -i source.mp4 -i source.mp4 \
+  -lavfi "[0:v][1:v]libvmaf=model=version=vmaf_v0.6.1neg" \
+  -f null -
+```
+
+If this returns anything below 99.9, there's a problem with the setup.
