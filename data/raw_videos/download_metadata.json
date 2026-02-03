@@ -1,18 +1,5 @@
 {
   "downloads": {
-    "elephants_dream": {
-      "name": "Elephants Dream - Teaser",
-      "url": "https://download.blender.org/demo/movies/elephantsdream_teaser.mp4.zip",
-      "size_bytes": 30639218,
-      "checksum": "5fe4e42a4c6893f40c90d841ac3e638d7b68d31b04d4a91f22b2bb5071d8c2d6",
-      "categories": [
-        "3d_animation",
-        "surreal",
-        "high_complexity"
-      ],
-      "license": "CC-BY-2.5",
-      "file_path": "data/raw_videos/elephantsdream_teaser.mp4"
-    },
     "bbb_1080p60": {
       "name": "Big Buck Bunny - 1080p 60fps",
       "url": "https://download.blender.org/demo/movies/BBB/bbb_sunflower_1080p_60fps_normal.mp4.zip",

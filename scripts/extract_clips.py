@@ -137,27 +137,45 @@ def generate_random_clips(
     if seed is not None:
         random.seed(seed)
 
-    # Calculate total duration and weights
-    total_duration = sum(v["info"]["duration"] for v in videos)
+    # Calculate total duration and weights (using usable duration)
+    total_duration = 0
+    for v in videos:
+        time_range = v.get("usable_time_range")
+        if time_range:
+            total_duration += time_range["end"] - time_range["start"]
+        else:
+            total_duration += v["info"]["duration"]
+
     clips = []
 
     # Distribute clips proportionally
     for video in videos:
-        proportion = video["info"]["duration"] / total_duration
+        # Determine usable time range
+        time_range = video.get("usable_time_range")
+        if time_range:
+            usable_start = time_range["start"]
+            usable_end = time_range["end"]
+            usable_duration = usable_end - usable_start
+        else:
+            usable_start = 0.0
+            usable_end = video["info"]["duration"]
+            usable_duration = video["info"]["duration"]
+
+        proportion = usable_duration / total_duration
         video_clips = max(1, round(num_clips * proportion))  # At least 1 clip per video
 
         for _ in range(video_clips):
             # Random clip duration within range
             clip_duration = random.uniform(min_duration, max_duration)
 
-            # Ensure clip fits in video
-            max_start = video["info"]["duration"] - clip_duration
-            if max_start < 0:
-                # Video is shorter than clip duration, use entire video
-                start_time = 0.0
-                clip_duration = video["info"]["duration"]
+            # Ensure clip fits in usable range
+            max_start = usable_end - clip_duration
+            if max_start < usable_start:
+                # Usable range is shorter than clip duration, use entire usable range
+                start_time = usable_start
+                clip_duration = usable_duration
             else:
-                start_time = random.uniform(0, max_start)
+                start_time = random.uniform(usable_start, max_start)
 
             clips.append(
                 {
@@ -277,12 +295,19 @@ Examples:
         if info is None:
             continue
 
-        # Get categories from sources
+        # Get categories and usable time range from sources
         source = sources_by_id.get(video_id, {})
         categories = source.get("categories", [])
+        usable_time_range = source.get("usable_time_range")
 
         videos.append(
-            {"id": video_id, "path": str(video_path), "info": info, "categories": categories}
+            {
+                "id": video_id,
+                "path": str(video_path),
+                "info": info,
+                "categories": categories,
+                "usable_time_range": usable_time_range,
+            }
         )
 
         print(

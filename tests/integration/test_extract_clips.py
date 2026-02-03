@@ -236,6 +236,118 @@ class TestGenerateRandomClips:
         assert clip["source_fps"] == 24
         assert clip["categories"] == ["test"]
 
+    def test_generate_clips_with_usable_time_range(self):
+        """Test that clips respect usable time range constraints."""
+        videos = [
+            {
+                "id": "video1",
+                "path": "/path/to/video1.mp4",
+                "categories": ["test"],
+                "info": {"width": 1920, "height": 1080, "fps": 24, "duration": 100.0},
+                "usable_time_range": {"start": 10.0, "end": 60.0},
+            }
+        ]
+
+        result = extract_clips.generate_random_clips(
+            videos, num_clips=5, min_duration=5.0, max_duration=10.0, seed=42
+        )
+
+        # All clips should be within the usable time range
+        for clip in result:
+            assert clip["start_time"] >= 10.0
+            assert clip["start_time"] + clip["duration"] <= 60.0
+
+    def test_generate_clips_mixed_usable_ranges(self):
+        """Test clip generation with some videos having usable ranges and some not."""
+        videos = [
+            {
+                "id": "video1",
+                "path": "/path/to/video1.mp4",
+                "categories": [],
+                "info": {"width": 1920, "height": 1080, "fps": 24, "duration": 100.0},
+                "usable_time_range": {"start": 10.0, "end": 50.0},  # 40s usable
+            },
+            {
+                "id": "video2",
+                "path": "/path/to/video2.mp4",
+                "categories": [],
+                "info": {"width": 1920, "height": 1080, "fps": 24, "duration": 100.0},
+                # No usable_time_range - entire 100s usable
+            },
+        ]
+
+        result = extract_clips.generate_random_clips(
+            videos, num_clips=10, min_duration=5.0, max_duration=10.0, seed=42
+        )
+
+        # Check clips from video1 respect the range
+        video1_clips = [c for c in result if c["video_id"] == "video1"]
+        for clip in video1_clips:
+            assert clip["start_time"] >= 10.0
+            assert clip["start_time"] + clip["duration"] <= 50.0
+
+        # Check clips from video2 can use the entire duration
+        video2_clips = [c for c in result if c["video_id"] == "video2"]
+        for clip in video2_clips:
+            assert clip["start_time"] >= 0.0
+            assert clip["start_time"] + clip["duration"] <= 100.0
+
+    def test_proportional_distribution_with_usable_range(self):
+        """Test that proportional distribution uses usable duration, not total duration."""
+        videos = [
+            {
+                "id": "video1",
+                "path": "/path/to/video1.mp4",
+                "categories": [],
+                "info": {"width": 1920, "height": 1080, "fps": 24, "duration": 1000.0},
+                "usable_time_range": {"start": 0.0, "end": 100.0},  # Only 100s usable
+            },
+            {
+                "id": "video2",
+                "path": "/path/to/video2.mp4",
+                "categories": [],
+                "info": {"width": 1920, "height": 1080, "fps": 24, "duration": 100.0},
+                # No restriction - entire 100s usable
+            },
+        ]
+
+        result = extract_clips.generate_random_clips(
+            videos, num_clips=10, min_duration=5.0, max_duration=10.0, seed=42
+        )
+
+        # Both videos have 100s usable, so clips should be distributed roughly equally
+        video1_clips = [c for c in result if c["video_id"] == "video1"]
+        video2_clips = [c for c in result if c["video_id"] == "video2"]
+
+        # Each should have at least 1 clip and roughly similar counts
+        assert len(video1_clips) >= 1
+        assert len(video2_clips) >= 1
+        # They should be within a reasonable range of each other
+        assert abs(len(video1_clips) - len(video2_clips)) <= 3
+
+    def test_usable_range_shorter_than_clip_duration(self):
+        """Test handling when usable range is shorter than requested clip duration."""
+        videos = [
+            {
+                "id": "video1",
+                "path": "/path/to/video1.mp4",
+                "categories": [],
+                "info": {"width": 1920, "height": 1080, "fps": 24, "duration": 100.0},
+                "usable_time_range": {"start": 10.0, "end": 15.0},  # Only 5s usable
+            }
+        ]
+
+        # Request 10s clips, but only 5s is available
+        result = extract_clips.generate_random_clips(
+            videos, num_clips=1, min_duration=10.0, max_duration=20.0, seed=42
+        )
+
+        assert len(result) == 1
+        clip = result[0]
+        # Should use the entire usable range
+        assert clip["start_time"] == 10.0
+        assert clip["duration"] == 5.0
+
 
 @pytest.mark.integration
 @pytest.mark.requires_ffmpeg

@@ -41,6 +41,24 @@
           "license": {
             "type": "string",
             "description": "License identifier (e.g., CC-BY-3.0, CC-BY-SA-4.0)"
+          },
+          "usable_time_range": {
+            "type": "object",
+            "description": "Optional time range in seconds for clip extraction (e.g., to exclude credits). If omitted, entire duration is usable.",
+            "properties": {
+              "start": {
+                "type": "number",
+                "description": "Start time in seconds (inclusive)",
+                "minimum": 0
+              },
+              "end": {
+                "type": "number",
+                "description": "End time in seconds (exclusive)",
+                "minimum": 0
+              }
+            },
+            "required": ["start", "end"],
+            "additionalProperties": false
           }
         },
         "additionalProperties": false

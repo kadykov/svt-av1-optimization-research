@@ -5,29 +5,47 @@
       "id": "bbb_1080p60",
       "name": "Big Buck Bunny - 1080p 60fps",
       "url": "https://download.blender.org/demo/movies/BBB/bbb_sunflower_1080p_60fps_normal.mp4.zip",
-      "categories": ["3d_animation", "high_motion", "colorful"],
-      "license": "CC-BY-3.0"
+      "categories": [
+        "3d_animation",
+        "high_motion",
+        "colorful"
+      ],
+      "license": "CC-BY-3.0",
+      "usable_time_range": {
+        "start": 5,
+        "end": 491
+      }
     },
     {
       "id": "sintel",
       "name": "Sintel",
       "url": "https://download.blender.org/demo/movies/Sintel.2010.1080p.mkv",
-      "categories": ["3d_animation", "dark_scenes", "film_grain_synthetic"],
-      "license": "CC-BY-3.0"
+      "categories": [
+        "3d_animation",
+        "dark_scenes",
+        "film_grain_synthetic"
+      ],
+      "license": "CC-BY-3.0",
+      "usable_time_range": {
+        "start": 23,
+        "end": 742
+      }
     },
     {
       "id": "tears_of_steel",
       "name": "Tears of Steel - Teaser",
       "url": "https://download.blender.org/demo/movies/tears-of-steel_teaser.mp4.zip",
-      "categories": ["3d_animation", "live_action", "vfx", "mixed_content"],
-      "license": "CC-BY-3.0"
-    },
-    {
-      "id": "elephants_dream",
-      "name": "Elephants Dream - Teaser",
-      "url": "https://download.blender.org/demo/movies/elephantsdream_teaser.mp4.zip",
-      "categories": ["3d_animation", "surreal", "high_complexity"],
-      "license": "CC-BY-2.5"
+      "categories": [
+        "3d_animation",
+        "live_action",
+        "vfx",
+        "mixed_content"
+      ],
+      "license": "CC-BY-3.0",
+      "usable_time_range": {
+        "start": 0,
+        "end": 25
+      }
     }
   ],
   "future_additions": {
