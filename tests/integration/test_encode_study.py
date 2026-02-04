@@ -96,6 +96,69 @@ class TestGenerateParamCombinations:
         assert len(result) == 1
         assert result[0] == {"preset": 8, "crf": 35}
 
+    def test_preset_varies_in_inner_loop(self):
+        """Test that preset varies fastest (inner loop) for better ETA estimates."""
+        params = {"preset": [8, 10], "crf": [30, 35]}
+        result = encode_study.generate_param_combinations(params)
+
+        # Expected order: CRF outer loop (slowest), preset inner loop (fastest)
+        # CRF=30,preset=8 -> CRF=30,preset=10 -> CRF=35,preset=8 -> CRF=35,preset=10
+        assert len(result) == 4
+        assert result[0] == {"preset": 8, "crf": 30}
+        assert result[1] == {"preset": 10, "crf": 30}
+        assert result[2] == {"preset": 8, "crf": 35}
+        assert result[3] == {"preset": 10, "crf": 35}
+
+    def test_preset_varies_fastest_with_three_parameters(self):
+        """Test preset varies fastest even with additional parameters."""
+        params = {"crf": [30, 35], "film_grain": [0, 10], "preset": [8, 10]}
+        result = encode_study.generate_param_combinations(params)
+
+        # Expected: CRF outermost, preset innermost (fastest varying)
+        assert len(result) == 8  # 2 * 2 * 2
+
+        # First 4 should have crf=30, second 4 should have crf=35
+        assert all(r["crf"] == 30 for r in result[:4])
+        assert all(r["crf"] == 35 for r in result[4:])
+
+        # Within each CRF group, preset should alternate most frequently
+        assert result[0]["preset"] == 8
+        assert result[1]["preset"] == 10
+        assert result[2]["preset"] == 8
+        assert result[3]["preset"] == 10
+
+    def test_ordering_with_only_preset(self):
+        """Test ordering when only preset parameter exists."""
+        params = {"preset": [8, 10, 12], "film_grain": [0, 10]}
+        result = encode_study.generate_param_combinations(params)
+
+        # Preset should still be innermost (vary fastest)
+        assert len(result) == 6
+        # Check first two have different presets but same film_grain
+        assert result[0]["preset"] != result[1]["preset"]
+        assert result[0]["film_grain"] == result[1]["film_grain"]
+
+    def test_ordering_with_only_crf(self):
+        """Test ordering when only CRF parameter exists."""
+        params = {"crf": [30, 35], "film_grain": [0, 10]}
+        result = encode_study.generate_param_combinations(params)
+
+        # CRF should be outermost (vary slowest)
+        assert len(result) == 4
+        # First two should have same CRF
+        assert result[0]["crf"] == result[1]["crf"]
+        assert result[0]["crf"] == 30
+
+    def test_ordering_without_crf_or_preset(self):
+        """Test that other parameters work when neither CRF nor preset present."""
+        params = {"film_grain": [0, 10], "tune": [0, 1]}
+        result = encode_study.generate_param_combinations(params)
+
+        # Should still generate all combinations
+        assert len(result) == 4
+        assert {"film_grain": 0, "tune": 0} in result
+        assert {"film_grain": 10, "tune": 1} in result
+
 
 class TestBuildOutputFilename:
     """Test structured filename generation."""

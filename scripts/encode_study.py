@@ -159,6 +159,11 @@ def normalize_param_value(value: Any) -> list[Any]:
 def generate_param_combinations(params: dict[str, Any]) -> list[dict[str, Any]]:
     """Generate all combinations of parameters from the study config.
 
+    Parameters are ordered to vary 'preset' in the inner loop (fastest changing)
+    and 'crf' in the outer loop (slowest changing). This provides better ETA
+    estimates by averaging over different preset speeds rather than completing
+    all CRFs for one preset before moving to the next.
+
     Args:
         params: Parameter dict where values can be single values or lists
 
@@ -168,11 +173,29 @@ def generate_param_combinations(params: dict[str, Any]) -> list[dict[str, Any]]:
     # Normalize all params to lists
     normalized = {k: normalize_param_value(v) for k, v in params.items()}
 
-    # Get all parameter names and their value lists
+    # Order parameters: CRF first (outer loop), preset last (inner loop)
+    # This makes preset vary fastest, providing better ETA by averaging speeds
     param_names = list(normalized.keys())
+
+    # Reorder: move 'preset' to end and 'crf' to beginning if they exist
+    if "preset" in param_names and "crf" in param_names:
+        param_names.remove("preset")
+        param_names.remove("crf")
+        # CRF first, then other params, then preset last
+        param_names = ["crf", *param_names, "preset"]
+    elif "preset" in param_names:
+        # Just move preset to end
+        param_names.remove("preset")
+        param_names.append("preset")
+    elif "crf" in param_names:
+        # Just move CRF to beginning
+        param_names.remove("crf")
+        param_names.insert(0, "crf")
+
     param_values = [normalized[name] for name in param_names]
 
     # Generate cartesian product of all parameter values
+    # The rightmost parameter changes fastest (inner loop)
     combinations = []
     for values in product(*param_values):
         combo = dict(zip(param_names, values, strict=True))
