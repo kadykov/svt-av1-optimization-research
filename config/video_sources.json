@@ -33,8 +33,8 @@
     },
     {
       "id": "tears_of_steel",
-      "name": "Tears of Steel - Teaser",
-      "url": "https://download.blender.org/demo/movies/tears-of-steel_teaser.mp4.zip",
+      "name": "Tears of Steel",
+      "url": "https://ftp.nluug.nl/pub/graphics/blender/demo/movies/ToS/tears_of_steel_1080p.mov",
       "categories": [
         "3d_animation",
         "live_action",
@@ -43,8 +43,8 @@
       ],
       "license": "CC-BY-3.0",
       "usable_time_range": {
-        "start": 0,
-        "end": 25
+        "start": 70,
+        "end": 587
       }
     }
   ],

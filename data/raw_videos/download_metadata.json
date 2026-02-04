@@ -1,5 +1,19 @@
 {
   "downloads": {
+    "tears_of_steel": {
+      "name": "Tears of Steel",
+      "url": "https://ftp.nluug.nl/pub/graphics/blender/demo/movies/ToS/tears_of_steel_1080p.mov",
+      "size_bytes": 583774083,
+      "checksum": "99486359be7e3681168a0fe94e1cbb0284c48b57b2a3ce7df4fa75e185987a15",
+      "categories": [
+        "3d_animation",
+        "live_action",
+        "vfx",
+        "mixed_content"
+      ],
+      "license": "CC-BY-3.0",
+      "file_path": "data/raw_videos/tears_of_steel.mov"
+    },
     "bbb_1080p60": {
       "name": "Big Buck Bunny - 1080p 60fps",
       "url": "https://download.blender.org/demo/movies/BBB/bbb_sunflower_1080p_60fps_normal.mp4.zip",
@@ -25,20 +39,6 @@
       ],
       "license": "CC-BY-3.0",
       "file_path": "data/raw_videos/sintel.mkv"
-    },
-    "tears_of_steel": {
-      "name": "Tears of Steel - Teaser",
-      "url": "https://download.blender.org/demo/movies/tears-of-steel_teaser.mp4.zip",
-      "size_bytes": 275771230,
-      "checksum": "25feaa713ecfc415528a8410466f531c75d4e75c6f5c76c81d624c825581e53b",
-      "categories": [
-        "3d_animation",
-        "live_action",
-        "vfx",
-        "mixed_content"
-      ],
-      "license": "CC-BY-3.0",
-      "file_path": "data/raw_videos/tears-of-steel_teaser.mp4"
     }
   }
 }
