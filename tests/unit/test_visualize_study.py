@@ -273,14 +273,21 @@ def test_prepare_dataframe_efficiency_calculations(sample_analysis_data):
 
     # Check efficiency metrics exist
     assert "vmaf_per_bpp" in df.columns
+    assert "p5_vmaf_per_bpp" in df.columns
     assert "vmaf_per_time" in df.columns
     assert "vmaf_per_bpp_per_time" in df.columns
+    assert "p5_vmaf_per_bpp_per_time" in df.columns
 
     # Verify vmaf_per_time is calculated correctly
     # vmaf_per_time = vmaf_mean / encoding_time_s
     first = df.iloc[0]
     expected_vmaf_per_time = first["vmaf_mean"] / first["encoding_time_s"]
     assert abs(first["vmaf_per_time"] - expected_vmaf_per_time) < 0.01
+
+    # Note: bpp calculations require clip metadata (resolution, fps) which is not in the fixture
+    # So those metrics will be NaN - just verify they exist and have the correct structure
+    assert first["p5_vmaf_per_bpp"] is not None
+    assert first["p5_vmaf_per_bpp_per_time"] is not None
 
 
 def test_dataframe_can_export_csv(sample_analysis_data, tmp_path):

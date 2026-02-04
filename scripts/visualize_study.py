@@ -65,9 +65,11 @@ METRICS = [
     ("vmaf_combined", "VMAF Score (Mean and P5)", True),  # Combined plot
     ("bpp", "Bitrate per Pixel (bpp)", False),
     ("vmaf_per_bpp", "VMAF per bpp (Quality Efficiency)", True),
+    ("p5_vmaf_per_bpp", "P5-VMAF per bpp (Quality Efficiency)", True),
     ("encoding_time_s", "Encoding Time (seconds)", False),
     ("vmaf_per_time", "VMAF per Encoding Second", True),
     ("vmaf_per_bpp_per_time", "VMAF per bpp per Encoding Second", True),
+    ("p5_vmaf_per_bpp_per_time", "P5-VMAF per bpp per Encoding Second", True),
 ]
 
 
@@ -192,6 +194,13 @@ def prepare_dataframe(analysis_data: dict[str, Any]) -> pd.DataFrame:
         np.nan,
     )
 
+    # P5-VMAF per bpp (quality efficiency for worst-case frames)
+    df["p5_vmaf_per_bpp"] = np.where(
+        df["bpp"] > 0,
+        df["vmaf_p5"] / df["bpp"],
+        np.nan,
+    )
+
     # VMAF per encoding time
     df["vmaf_per_time"] = np.where(
         df["encoding_time_s"] > 0,
@@ -203,6 +212,13 @@ def prepare_dataframe(analysis_data: dict[str, Any]) -> pd.DataFrame:
     df["vmaf_per_bpp_per_time"] = np.where(
         (df["bpp"] > 0) & (df["encoding_time_s"] > 0),
         df["vmaf_mean"] / df["bpp"] / df["encoding_time_s"],
+        np.nan,
+    )
+
+    # P5-VMAF per bpp per encoding time (combined efficiency for worst-case frames)
+    df["p5_vmaf_per_bpp_per_time"] = np.where(
+        (df["bpp"] > 0) & (df["encoding_time_s"] > 0),
+        df["vmaf_p5"] / df["bpp"] / df["encoding_time_s"],
         np.nan,
     )
 
@@ -543,6 +559,134 @@ def plot_metric_trio(
     plot_vs_preset(df, metric, metric_label, output_dir, study_name)
 
 
+def plot_clip_duration_analysis(
+    df: pd.DataFrame,
+    output_dir: Path,
+    study_name: str,
+) -> None:
+    """
+    Plot efficiency metrics against clip duration (frames or total pixels).
+
+    This helps determine if short clips are sufficient for codec testing.
+    X-axis options:
+      1. Number of frames: duration * fps
+      2. Total pixels: frames * width * height
+
+    Y-axis: efficiency metrics like vmaf_per_bpp or p5_vmaf_per_bpp
+
+    Each point represents one clip's average performance across all presets/CRF values.
+    """
+    clip_metadata = load_clip_metadata()
+
+    # Calculate frames and total pixels for each clip
+    clip_stats = []
+    for clip_name in df["source_clip"].unique():
+        clip_info = clip_metadata.get(clip_name, {})
+        duration = clip_info.get("actual_duration", 0)
+        fps = clip_info.get("source_fps", 0)
+        width = clip_info.get("source_width", 0)
+        height = clip_info.get("source_height", 0)
+
+        if duration and fps and width and height:
+            frames = int(duration * fps)
+            total_pixels = frames * width * height
+
+            # Get average metrics for this clip across all encodings
+            clip_data = df[df["source_clip"] == clip_name]
+            clip_stats.append(
+                {
+                    "clip_name": clip_name,
+                    "frames": frames,
+                    "total_pixels": total_pixels,
+                    "width": width,
+                    "height": height,
+                    "fps": fps,
+                    "duration": duration,
+                    "vmaf_mean": clip_data["vmaf_mean"].mean(),
+                    "vmaf_p5": clip_data["vmaf_p5"].mean(),
+                    "vmaf_per_bpp": clip_data["vmaf_per_bpp"].mean(),
+                    "p5_vmaf_per_bpp": clip_data["p5_vmaf_per_bpp"].mean(),
+                    "bpp": clip_data["bpp"].mean(),
+                }
+            )
+
+    if len(clip_stats) < 2:
+        print("Skipping duration analysis (insufficient clip data)", file=sys.stderr)
+        return
+
+    clip_df = pd.DataFrame(clip_stats)
+
+    # Define metrics to plot with both x-axis types
+    duration_metrics = [
+        ("vmaf_per_bpp", "VMAF per bpp (Quality Efficiency)"),
+        ("p5_vmaf_per_bpp", "P5-VMAF per bpp (Quality Efficiency)"),
+    ]
+
+    x_axis_configs = [
+        ("frames", "Number of Frames", 1),
+        ("total_pixels", "Total Pixels (frames x width x height)", 1e6),
+    ]
+
+    for metric, metric_label in duration_metrics:
+        if metric not in clip_df.columns or clip_df[metric].isna().all():
+            continue
+
+        for x_col, x_label, scale_factor in x_axis_configs:
+            fig, ax = plt.subplots(figsize=(10, 7))
+
+            # Scale x values for readability
+            x_values = clip_df[x_col] / scale_factor
+
+            # Scatter plot with point size proportional to resolution
+            sizes = (clip_df["width"] * clip_df["height"]) / 10000  # Scale for visibility
+
+            scatter = ax.scatter(
+                x_values,
+                clip_df[metric],
+                s=sizes,
+                alpha=0.6,
+                c=clip_df["fps"],
+                cmap="viridis",
+                edgecolors="black",
+                linewidths=0.5,
+            )
+
+            # Add colorbar for FPS
+            cbar = plt.colorbar(scatter, ax=ax)
+            cbar.set_label("FPS (frames per second)")
+
+            # Add trend line
+            if len(clip_df) >= 3:  # Need at least 3 points for meaningful trend
+                z = np.polyfit(x_values, clip_df[metric], 1)
+                p = np.poly1d(z)
+                ax.plot(
+                    x_values,
+                    p(x_values),
+                    "r--",
+                    alpha=0.5,
+                    linewidth=2,
+                    label=f"Trend: {z[0]:.2e}x + {z[1]:.2f}",
+                )
+
+            # Formatting
+            ax.set_xlabel(f"{x_label}" + (f" (x {scale_factor:.0e})" if scale_factor != 1 else ""))
+            ax.set_ylabel(metric_label)
+            ax.set_title(
+                f"{study_name}: {metric_label} vs Clip Duration\n"
+                f"(Point size = resolution, color = FPS)"
+            )
+            ax.grid(True, alpha=0.3)
+            if len(clip_df) >= 3:
+                ax.legend()
+
+            # Save plot
+            x_suffix = "frames" if x_col == "frames" else "pixels"
+            output_path = output_dir / f"{study_name}_duration_{metric}_{x_suffix}.webp"
+            plt.savefig(output_path)
+            print(f"  Saved: {output_path}")
+            plt.close(fig)
+
+
 def plot_clip_comparison(
     df: pd.DataFrame,
     output_dir: Path,
@@ -717,9 +861,11 @@ Available metrics:
   vmaf_combined       - VMAF Mean and P5 (combined plot)
   bpp                 - Bitrate per Pixel
   vmaf_per_bpp        - VMAF per bpp (quality efficiency)
+  p5_vmaf_per_bpp     - P5-VMAF per bpp (quality efficiency)
   encoding_time_s     - Encoding Time
   vmaf_per_time       - VMAF per Encoding Second
   vmaf_per_bpp_per_time - Combined efficiency metric
+  p5_vmaf_per_bpp_per_time - P5-VMAF combined efficiency metric
         """,
     )
 
@@ -753,6 +899,12 @@ Available metrics:
         "--no-clip-plots",
         action="store_true",
         help="Skip per-clip comparison plots",
+    )
+
+    parser.add_argument(
+        "--no-duration-analysis",
+        action="store_true",
+        help="Skip clip duration analysis plots",
     )
 
     parser.add_argument(
@@ -825,6 +977,11 @@ Available metrics:
     if not args.no_clip_plots:
         print("\nGenerating per-clip comparison plots...")
         plot_clip_comparison(df, output_dir, args.study_name)
+
+    # Clip duration analysis (optional)
+    if not args.no_duration_analysis:
+        print("\nGenerating clip duration analysis...")
+        plot_clip_duration_analysis(df, output_dir, args.study_name)
 
     # Export CSV
     if not args.no_csv:
