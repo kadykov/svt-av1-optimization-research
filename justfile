@@ -125,17 +125,13 @@ visualize-study STUDY *ARGS:
 visualize-to STUDY OUTPUT_DIR *ARGS:
     . venv/bin/activate && python scripts/visualize_study.py {{STUDY}} --output {{OUTPUT_DIR}} {{ARGS}}
 
-# Generate only specific plot types
-visualize-plots STUDY *PLOTS:
-    . venv/bin/activate && python scripts/visualize_study.py {{STUDY}} --plots {{PLOTS}}
+# Generate specific metrics only
+visualize-metrics STUDY *METRICS:
+    . venv/bin/activate && python scripts/visualize_study.py {{STUDY}} --metrics {{METRICS}}
 
-# Generate storage efficiency analysis (VMAF per MB, time investment)
-visualize-storage STUDY:
-    . venv/bin/activate && python scripts/visualize_study.py {{STUDY}} --plots storage-efficiency
-
-# Generate multi-metric comparison (VMAF, PSNR, SSIM)
-visualize-metrics STUDY:
-    . venv/bin/activate && python scripts/visualize_study.py {{STUDY}} --plots multimetric-comparison
+# Skip optional plots for faster processing
+visualize-fast STUDY:
+    . venv/bin/activate && python scripts/visualize_study.py {{STUDY}} --no-clip-plots --no-duration-analysis
 
 # Clean extracted clips (removes videos and generated metadata, keeps schemas)
 clean-clips:

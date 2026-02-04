@@ -126,24 +126,37 @@ just analyze-study baseline_sweep -v
 # Generate all plots and CSV for a study
 just visualize-study baseline_sweep
 
-# Visualize with custom output directory
-just visualize-to baseline_sweep custom_output/
+# Generate specific metrics only
+python scripts/visualize_study.py baseline_sweep --metrics vmaf_combined vmaf_per_bpp
 
-# Generate only specific plot types
-just visualize-plots baseline_sweep rate-distortion speed-quality
+# Skip optional plots for faster processing
+python scripts/visualize_study.py baseline_sweep --no-clip-plots --no-duration-analysis
+
+# Skip CSV or report generation
+python scripts/visualize_study.py baseline_sweep --no-csv --no-report
 
 # Clean analysis results (plots, CSVs)
 just clean-results
 ```
 
-**Available plot types:**
-- `rate-distortion`: VMAF vs bitrate per pixel (bpp) curves - resolution-normalized
-- `storage-efficiency`: VMAF per bpp vs encoding parameters for archival use cases
-- `multimetric-comparison`: Compare VMAF, PSNR, and SSIM vs bpp side-by-side
-- `speed-quality`: Encoding time vs quality tradeoffs
-- `parameter-impact`: Heatmaps showing preset/CRF effects on quality and efficiency
-- `clip-comparison`: Per-clip quality and bpp differences
-- `vmaf-distribution`: Quality consistency analysis
+**Plot organization:**
+- **Metric trios**: For each metric, three views (heatmap, vs CRF, vs preset)
+- **Per-clip comparison**: Content-dependent behavior analysis
+- **Duration analysis**: Efficiency vs clip characteristics
+- **CSV exports**: Raw and aggregated data for custom analysis
+- **Text report**: Human-readable summary with best configurations
+
+**Available metrics:**
+- `vmaf_combined` - VMAF Mean and P5 (combined plot)
+- `bpp` - Bitrate per pixel (compression rate)
+- `vmaf_per_bpp` - Quality efficiency
+- `p5_vmaf_per_bpp` - Worst-case quality efficiency
+- `encoding_time_s` - Encoding time
+- `vmaf_per_time` - Quality per encoding second
+- `vmaf_per_bpp_per_time` - Combined efficiency metric
+- `p5_vmaf_per_bpp_per_time` - P5-VMAF combined efficiency
+
+See [VISUALIZATION_GUIDE.md](docs/VISUALIZATION_GUIDE.md) for details.
 
 ### Cleanup
 ```bash

@@ -56,68 +56,114 @@ ls -lh results/baseline_sweep/
 
 ## What Gets Generated
 
-### Visual Analysis (PNG files)
+### Visual Analysis (WebP files)
 
-1. **`baseline_sweep_rate_distortion.png`** (709 KB)
-   - Left plot: VMAF mean vs file size for each preset
-   - Right plot: VMAF harmonic mean vs file size (worst-case quality)
-   - Shows quality/compression efficiency tradeoffs
-   - CRF values annotated on curves
+The visualization system generates comprehensive plot sets organized by metric and view type.
 
-2. **`baseline_sweep_speed_quality.png`** (216 KB)
-   - Left plot: Encoding time vs VMAF quality
-   - Right plot: Quality per encoding second by preset (bar chart)
-   - Shows speed vs quality tradeoffs
-   - Identifies fastest presets for target quality
+#### Metric Trio Plots
 
-3. **`baseline_sweep_parameter_impact.png`** (392 KB)
-   - Four heatmaps showing preset × CRF combinations:
-     - VMAF mean score
-     - File size (MB)
-     - Encoding time (seconds)
-     - VMAF per MB (efficiency)
-   - Full parameter space visualization at a glance
+For each metric, three complementary views are generated:
 
-4. **`baseline_sweep_clip_comparison.png`** (157 KB)
-   - Left plot: VMAF by clip and preset
-   - Right plot: File size by clip and preset
-   - Shows content-dependent encoding behavior
-   - Identifies "hard to encode" clips
+**1. Heatmap View** (`<study>_heatmap_<metric>.webp`)
+- Shows full parameter space (preset × CRF grid)
+- Color intensity indicates metric value
+- Example: `baseline_sweep_heatmap_vmaf_mean.webp`
 
-5. **`baseline_sweep_vmaf_distribution.png`** (258 KB)
-   - Left plot: Box plots of VMAF percentiles (P5-P95)
-   - Right plot: Mean vs harmonic mean scatter
-   - Shows quality consistency and frame-level variation
-   - Diagonal line indicates perfect consistency
+**2. vs CRF Line Plot** (`<study>_vs_crf_<metric>.webp`)
+- X-axis: CRF values
+- One line per preset
+- Shows how metric changes with CRF at each preset
+- Example: `baseline_sweep_vs_crf_vmaf_combined.webp`
+
+**3. vs Preset Line Plot** (`<study>_vs_preset_<metric>.webp`)
+- X-axis: Preset values
+- One line per CRF
+- Shows how metric changes across presets at each CRF
+- Example: `baseline_sweep_vs_preset_vmaf_per_bpp.webp`
+
+#### Available Metrics
+
+Each metric trio covers:
+- **vmaf_combined** - VMAF Mean and P5 (combined plot showing both)
+- **bpp** - Bitrate per pixel (compression rate)
+- **vmaf_per_bpp** - Quality efficiency (VMAF / bpp)
+- **p5_vmaf_per_bpp** - Worst-case quality efficiency
+- **encoding_time_s** - Encoding time
+- **vmaf_per_time** - Quality per encoding second
+- **vmaf_per_bpp_per_time** - Combined efficiency metric
+- **p5_vmaf_per_bpp_per_time** - P5-VMAF combined efficiency
+
+#### Per-Clip Comparison Plots
+
+These show content-dependent behavior:
+- `baseline_sweep_clip_vmaf_mean.webp` - Quality by clip and preset
+- `baseline_sweep_clip_bpp.webp` - Compression by clip and preset
+- `baseline_sweep_clip_vmaf_per_bpp.webp` - Efficiency by clip and preset
+
+**Insights:**
+- Which clips are "hard to encode"
+- Consistency across different content types
+- Outliers or problematic clips
+
+#### Duration Analysis Plots
+
+These show relationships between clip characteristics and efficiency:
+- `baseline_sweep_duration_vmaf_per_bpp_frames.webp` - Efficiency vs clip length (frames)
+- `baseline_sweep_duration_vmaf_per_bpp_pixels.webp` - Efficiency vs resolution (pixels)
+- `baseline_sweep_duration_p5_vmaf_per_bpp_frames.webp` - P5-VMAF efficiency vs frames
+- `baseline_sweep_duration_p5_vmaf_per_bpp_pixels.webp` - P5-VMAF efficiency vs pixels
+
+**Insights:**
+- How clip duration affects encoding efficiency
+- Resolution impact on compression
+- Whether results generalize across different video lengths
 
 ### Data Export (CSV)
 
-**`baseline_sweep_analysis.csv`**
+Two CSV files are generated for detailed analysis:
 
-Contains all metrics in tabular format:
+**1. `baseline_sweep_raw_data.csv`**
+
+Per-encoding metrics for all individual encodings. Each row represents one encoding of one clip.
+
+Contains:
 - Identifiers: output_file, source_clip
 - Parameters: preset, crf
-- File metrics: file_size_mb, bitrate_kbps
+- File metrics: file_size_mb, bitrate_kbps, bpp (bitrate per pixel)
 - Performance: encoding_time_s, encoding_fps, analysis_time_s
 - VMAF: mean, harmonic_mean, min, p1, p5, p25, median, p75, p95, std
 - Other metrics: psnr_avg, ssim_avg
-- Efficiency: vmaf_per_mb, quality_per_encode_s
+- Efficiency: vmaf_per_bpp, p5_vmaf_per_bpp, vmaf_per_time, vmaf_per_bpp_per_time, p5_vmaf_per_bpp_per_time
+
+**2. `baseline_sweep_aggregated.csv`**
+
+Metrics averaged across clips for each parameter combination (preset × CRF). Each row represents the typical performance for one configuration.
+
+Same columns as raw data, but aggregated across all clips.
 
 **Example uses:**
 ```python
 import pandas as pd
 
-df = pd.read_csv('results/baseline_sweep/baseline_sweep_analysis.csv')
+# Load aggregated data for parameter comparison
+agg_df = pd.read_csv('results/baseline_sweep/baseline_sweep_aggregated.csv')
 
-# Find best efficiency configurations (VMAF > 90, small file)
-efficient = df[(df['vmaf_mean'] > 90) & (df['file_size_mb'] < 5)]
-print(efficient[['preset', 'crf', 'vmaf_mean', 'file_size_mb']])
+# Find best efficiency configurations (VMAF > 90, low bpp)
+efficient = agg_df[(agg_df['vmaf_mean'] > 90) & (agg_df['bpp'] < 0.03)]
+print(efficient[['preset', 'crf', 'vmaf_mean', 'bpp', 'vmaf_per_bpp']])
 
 # Compare presets at same CRF
-p6_crf30 = df[(df['preset'] == 6) & (df['crf'] == 30)]
-p10_crf30 = df[(df['preset'] == 10) & (df['crf'] == 30)]
-print(f"Preset 6: {p6_crf30['encoding_time_s'].mean():.2f}s")
-print(f"Preset 10: {p10_crf30['encoding_time_s'].mean():.2f}s")
+p6_crf30 = agg_df[(agg_df['preset'] == 6) & (agg_df['crf'] == 30)]
+p10_crf30 = agg_df[(agg_df['preset'] == 10) & (agg_df['crf'] == 30)]
+print(f"Preset 6: {p6_crf30['encoding_time_s'].values[0]:.2f}s")
+print(f"Preset 10: {p10_crf30['encoding_time_s'].values[0]:.2f}s")
+
+# Load raw data for per-clip analysis
+raw_df = pd.read_csv('results/baseline_sweep/baseline_sweep_raw_data.csv')
+# Find which clips are hardest to encode efficiently
+clip_efficiency = raw_df.groupby('source_clip')['vmaf_per_bpp'].mean().sort_values()
+print("Hardest to encode clips:")
+print(clip_efficiency.head())
 ```
 
 ### Text Summary Report
@@ -125,44 +171,57 @@ print(f"Preset 10: {p10_crf30['encoding_time_s'].mean():.2f}s")
 **`baseline_sweep_report.txt`**
 
 Human-readable summary including:
-- Study metadata (date, VMAF model, clips analyzed)
-- Overall statistics (quality range, file size range, time range)
+- Study metadata (date, VMAF model, number of clips analyzed)
+- Parameter ranges (presets and CRF values tested)
+- Aggregated statistics (ranges for all key metrics)
 - Best configurations:
-  - Highest quality
-  - Best efficiency (VMAF per MB)
-  - Smallest file
-- Parameter impact tables (by preset and CRF)
+  - Highest VMAF Mean
+  - Best Quality Efficiency (VMAF per bpp)
+  - Lowest Bitrate (bpp)
 
 **Example output:**
 ```
 Analysis Report: baseline_sweep
 ================================================================================
 
-Analysis Date: 2026-01-30T23:08:52.000339Z
+Study Metadata
+----------------------------------------
+Analysis Date: 2026-02-04T19:07:26.798343Z
 VMAF Model: vmaf_v0.6.1neg
-Clips Analyzed: 2
-Total Encodings: 18
-Metrics: SSIM, PSNR, VMAF
+Clips Analyzed: 5
+Total Encodings: 225
+Metrics: VMAF, SSIM, PSNR
 
-Overall Statistics
---------------------------------------------------------------------------------
-VMAF Mean Range: 1.91 - 92.44
-File Size Range: 2.44 - 11.87 MB
-Encoding Time Range: 3.26 - 17.76 seconds
+Parameter Ranges
+----------------------------------------
+Presets: [2, 3, 4, 5, 6, 7, 8, 9, 10]
+CRF values: [20, 25, 30, 35, 40]
 
-Best Configurations
---------------------------------------------------------------------------------
-Highest Quality:
-  Preset: 6, CRF: 20
-  VMAF: 92.44
-  File Size: 7.18 MB
-  Encoding Time: 16.28s
+Aggregated Statistics (Mean Across Clips)
+----------------------------------------
+Bitrate per Pixel (bpp):
+  Range: 0.021 - 0.095
+VMAF per bpp (Quality Efficiency):
+  Range: 1030.722 - 4315.950
+P5-VMAF per bpp (Quality Efficiency):
+  Range: 989.442 - 4115.742
 
-Best Efficiency (VMAF per MB):
-  Preset: 10, CRF: 40
-  VMAF: 88.20
-  VMAF per MB: 36.18
-  File Size: 2.44 MB
+Best Configurations (Aggregated)
+----------------------------------------
+Highest VMAF Mean:
+  Preset 2, CRF 20
+  VMAF: 96.46
+  bpp: 0.0923
+
+Best Quality Efficiency (VMAF per bpp):
+  Preset 3, CRF 40
+  VMAF per bpp: 4315.95
+  VMAF: 89.85, bpp: 0.0212
+
+Lowest Bitrate (bpp):
+  Preset 3, CRF 40
+  bpp: 0.0212
+  VMAF: 89.85
 ```
 
 ## Interpreting Results
@@ -174,93 +233,135 @@ cat results/baseline_sweep/baseline_sweep_report.txt
 ```
 
 This gives you:
-- Overall quality and size ranges
+- Study metadata and scope
+- Parameter ranges tested
+- Overall metric ranges
 - Best configurations for different goals
-- Parameter impact statistics
 
-### 2. Review Rate-Distortion Curves
+### 2. Review VMAF Heatmaps
 
-Open `baseline_sweep_rate_distortion.png`:
-- Look for the "sweet spot" where quality plateaus
-- Compare preset efficiency (quality per MB)
-- Identify diminishing returns points
+Open the heatmap files to get the big picture:
+
+**`baseline_sweep_heatmap_vmaf_mean.webp`**:
+- Full parameter space visualization
+- Look for "sweet spots" where quality is high
+- Identify where quality starts to drop significantly
+
+**`baseline_sweep_heatmap_vmaf_p5.webp`**:
+- Worst-case quality (5th percentile)
+- Should be similar to mean (indicates consistency)
+- Large gaps indicate unstable quality
+
+**Key questions:**
+- Where does quality plateau?
+- Which combinations give good quality?
+- Are there "dead zones" to avoid?
+
+### 3. Examine Efficiency Metrics
+
+**`baseline_sweep_heatmap_vmaf_per_bpp.webp`**:
+- Quality per compression
+- Higher values = more efficient
+- Find the "Goldilocks zone" of good quality and low bpp
+
+**`baseline_sweep_heatmap_vmaf_per_bpp_per_time.webp`**:
+- Combined efficiency metric
+- Balances quality, compression, and encoding speed
+- Best for finding practical sweet spots
+
+**Key questions:**
+- Which configurations give best "bang for the buck"?
+- Where's the efficiency sweet spot?
+- What's the trade-off between efficiency and absolute quality?
+
+### 4. Check Parameter Trends with Line Plots
+
+**vs CRF plots** (e.g., `baseline_sweep_vs_crf_vmaf_combined.webp`):
+- How does quality change with CRF?
+- Compare preset curves
+- Identify where diminishing returns start
+
+**vs Preset plots** (e.g., `baseline_sweep_vs_preset_vmaf_per_bpp.webp`):
+- How do presets compare at same quality target?
+- Speed vs efficiency trade-offs
+- Which presets behave consistently?
 
 **Key questions:**
 - At what CRF does quality drop noticeably?
-- Which preset offers best efficiency at target quality?
-- Is the quality drop worth the file size reduction?
+- Which preset offers best efficiency at my target quality?
+- Is faster preset worth the efficiency loss?
 
-### 3. Check Speed vs Quality
+### 5. Review Per-Clip Comparison
 
-Open `baseline_sweep_speed_quality.png`:
-- See encoding time differences between presets
-- Evaluate if quality gain justifies slower encoding
-- Check "quality per encoding second" efficiency
-
-**Key questions:**
-- For target quality, how much time do different presets take?
-- Is faster preset worth slight quality loss?
-- What's the time investment for marginal quality gains?
-
-### 4. Examine Parameter Heatmaps
-
-Open `baseline_sweep_parameter_impact.png`:
-- See full parameter space at once
-- Identify "safe" parameter ranges
-- Find optimal combinations for specific goals
-
-**Key questions:**
-- Which preset/CRF combinations cluster together in quality?
-- Where are the efficiency hotspots (high VMAF per MB)?
-- Are there parameter combinations to avoid?
-
-### 5. Review Clip-Specific Behavior
-
-Open `baseline_sweep_clip_comparison.png`:
-- Identify content-dependent patterns
-- See which clips are "harder" to encode
-- Verify consistency across content types
+**`baseline_sweep_clip_vmaf_mean.webp`** and **`baseline_sweep_clip_vmaf_per_bpp.webp`**:
+- Content-dependent encoding behavior
+- Which clips are "harder" to encode efficiently
+- Consistency across different content types
 
 **Key questions:**
 - Do all clips respond similarly to parameter changes?
 - Are some clips consistently harder to encode?
-- Do results generalize across content?
+- Do results generalize across my content?
+- Should I use different settings for different content types?
 
-### 6. Assess Quality Consistency
+### 6. Check Duration Analysis
 
-Open `baseline_sweep_vmaf_distribution.png`:
-- Check frame-level quality variation (box plots)
-- Compare mean vs harmonic mean (consistency indicator)
-- Identify encodings with quality drops
+**`baseline_sweep_duration_vmaf_per_bpp_frames.webp`** and **`baseline_sweep_duration_vmaf_per_bpp_pixels.webp`**:
+- Relationship between clip characteristics and efficiency
+- Whether results scale to different durations/resolutions
 
 **Key questions:**
-- Does quality stay consistent throughout the video?
-- Are there problematic frames (low P5)?
-- Is average quality representative or misleading?
+- Does efficiency change with video length?
+- Do shorter clips encode differently than longer ones?
+- Is resolution a major factor in compression efficiency?
+
+### 7. Use CSV for Detailed Analysis
+
+For custom questions, load the CSV data:
+
+```python
+import pandas as pd
+
+# Load aggregated data
+df = pd.read_csv('results/baseline_sweep/baseline_sweep_aggregated.csv')
+
+# Find sweet spot: high quality, good efficiency, reasonable time
+sweet_spot = df[
+    (df['vmaf_mean'] > 92) &
+    (df['vmaf_p5'] > 88) &  # Good worst-case quality
+    (df['encoding_time_s'] < 15) &
+    (df['vmaf_per_bpp'] > 2000)
+].sort_values('vmaf_per_bpp_per_time', ascending=False)
+
+print("Sweet spot configurations:")
+print(sweet_spot[['preset', 'crf', 'vmaf_mean', 'bpp', 'encoding_time_s']].head())
+```
+
+**Key questions:**
+- What's the optimal configuration for my specific requirements?
+- How much do I gain/lose by changing one parameter?
+- Which metric should I prioritize?
 
 ## Customization Examples
 
-### Generate Only Specific Plots
+### Generate Only Specific Metrics
 
 ```bash
-# Only rate-distortion and parameter impact
-just visualize-plots baseline_sweep rate-distortion parameter-impact
+# Only VMAF and efficiency plots
+python scripts/visualize_study.py baseline_sweep --metrics vmaf_combined vmaf_per_bpp
 
-# Only speed comparison
-just visualize-plots baseline_sweep speed-quality
+# Only encoding time analysis
+python scripts/visualize_study.py baseline_sweep --metrics encoding_time_s vmaf_per_time
 ```
 
-### Custom Output Directory
+### Minimal Output (Fast)
 
 ```bash
-# Save to custom location
-just visualize-to baseline_sweep analysis_results/baseline/
-
-# Different study, different location
-just visualize-to film_grain analysis_results/grain_study/
+# Skip per-clip and duration analysis for faster processing
+python scripts/visualize_study.py baseline_sweep --no-clip-plots --no-duration-analysis
 ```
 
-### Python Analysis Script
+### Custom Analysis Script
 
 Create `custom_analysis.py`:
 
@@ -268,25 +369,25 @@ Create `custom_analysis.py`:
 import pandas as pd
 import matplotlib.pyplot as plt
 
-# Load data
-df = pd.read_csv('results/baseline_sweep/baseline_sweep_analysis.csv')
+# Load aggregated data
+df = pd.read_csv('results/baseline_sweep/baseline_sweep_aggregated.csv')
 
-# Custom analysis: Find best preset for 4K streaming
-# Target: VMAF > 93, minimize file size
-streaming_configs = df[df['vmaf_mean'] > 93].sort_values('file_size_mb')
+# Custom analysis: Find best preset for streaming
+# Target: VMAF > 93, minimize bpp
+streaming_configs = df[df['vmaf_mean'] > 93].sort_values('bpp')
 
-print("Best configs for 4K streaming (VMAF > 93):")
-print(streaming_configs[['preset', 'crf', 'vmaf_mean', 'file_size_mb', 'encoding_time_s']].head(5))
+print("Best configs for streaming (VMAF > 93):")
+print(streaming_configs[['preset', 'crf', 'vmaf_mean', 'bpp', 'encoding_time_s']].head(5))
 
-# Custom plot: CRF vs compression ratio
+# Custom plot: Efficiency frontier
 plt.figure(figsize=(10, 6))
 for preset in sorted(df['preset'].unique()):
-    subset = df[df['preset'] == preset]
-    plt.plot(subset['crf'], subset['file_size_mb'], marker='o', label=f'Preset {preset}')
+    subset = df[df['preset'] == preset].sort_values('bpp')
+    plt.plot(subset['bpp'], subset['vmaf_mean'], marker='o', label=f'Preset {preset}')
 
-plt.xlabel('CRF')
-plt.ylabel('File Size (MB)')
-plt.title('CRF vs File Size by Preset')
+plt.xlabel('Bitrate per Pixel (bpp)')
+plt.ylabel('VMAF Mean Score')
+plt.title('Efficiency Frontier by Preset')
 plt.legend()
 plt.grid(True, alpha=0.3)
 plt.savefig('custom_crf_analysis.png', dpi=300)
@@ -343,7 +444,7 @@ print("Best VMAF by study:")
 print(all_data.groupby('study')['vmaf_mean'].max())
 
 print("\nBest efficiency by study:")
-print(all_data.groupby('study')['vmaf_per_mb'].max())
+print(all_data.groupby('study')['vmaf_per_bpp'].max())
 ```
 
 ## Next Steps
