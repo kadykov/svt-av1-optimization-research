@@ -109,27 +109,77 @@ We also calculate:
 - CRF 20 and CRF 40 produce nearly identical VMAF scores
 - Many frames have VMAF=0.0
 - High variance in frame scores (std_dev > 20)
+- Alternating pattern of high and low scores (e.g., 92, 12, 17, 91, 20...)
 
 **Common Causes and Solutions:**
 
-1. **Timestamp Misalignment** (Most Common)
+1. **B-Frame Ordering Issues from Stream Copy** (Most Common - CRITICAL)
+   - When clips are extracted with `-c copy` (stream copy), B-frame ordering
+     in the container may differ from presentation order
+   - This causes libvmaf to compare frame N of encoded with frame N±1 of reference
+   - Results in alternating high/low VMAF scores and artificially low averages
+   - **Diagnosis:** Check per-frame VMAF scores - alternating pattern indicates this issue
+   - **Fix:** Re-extract source clips using lossless encoding (FFV1):
+     ```bash
+     # Instead of stream copy:
+     ffmpeg -ss START -i source.mp4 -t DURATION -c copy output.mp4  # BAD
+
+     # Use lossless re-encoding:
+     ffmpeg -ss START -i source.mp4 -t DURATION -c:v ffv1 -level 3 -an output.mkv  # GOOD
+     ```
+   - The `extract_clips.py` script now uses FFV1 by default. Use `--fast` flag
+     for stream copy mode (not recommended for VMAF analysis).
+
+2. **Timestamp Misalignment**
    - Clips extracted with `-c copy` retain original timestamps
    - Source starts at different PTS than encoded file
-   - **Fix:** Use `setpts=PTS-STARTPTS` in the filter graph
+   - **Fix:** Use `setpts=PTS-STARTPTS` in the filter graph (already implemented)
 
-2. **Frame Count Mismatch**
+3. **Frame Count Mismatch**
    - Different number of frames in source vs encoded
    - Can happen with variable frame rate sources
    - **Check:** `ffprobe -count_frames -select_streams v:0 ...`
 
-3. **Resolution Mismatch**
+4. **Resolution Mismatch**
    - Source and encoded have different resolutions
    - **Check:** `ffprobe -show_entries stream=width,height ...`
 
-4. **B-Frame Ordering Issues**
-   - H.264/H.265 sources with B-frames
-   - AV1 encoded without B-frames
-   - Usually handled correctly by FFmpeg decoder, but timestamp alignment helps
+### Diagnosing B-Frame Ordering Issues
+
+To check if you have B-frame ordering problems:
+
+1. **Check source has B-frames:**
+   ```bash
+   ffprobe -v error -select_streams v:0 -show_entries stream=has_b_frames -of csv source.mp4
+   # If output is "stream,1", source has B-frames
+   ```
+
+2. **Check per-frame VMAF scores:**
+   ```bash
+   ffmpeg -i encoded.mkv -i source.mp4 \
+     -lavfi "[0:v]setpts=PTS-STARTPTS[a];[1:v]setpts=PTS-STARTPTS[b];[a][b]libvmaf=log_path=/tmp/vmaf.json:log_fmt=json" \
+     -f null -
+
+   # Check for alternating pattern
+   cat /tmp/vmaf.json | jq '[.frames[] | .metrics.vmaf] | .[:20]'
+   ```
+
+   If you see alternating high/low scores like `[92, 12, 91, 15, 93, 18, ...]`,
+   you have B-frame ordering issues.
+
+3. **Verify fix by comparing against lossless reference:**
+   ```bash
+   # Re-encode source to lossless FFV1
+   ffmpeg -i source.mp4 -c:v ffv1 -level 3 -an /tmp/source_lossless.mkv
+
+   # Compare encoded against lossless reference
+   ffmpeg -i encoded.mkv -i /tmp/source_lossless.mkv \
+     -lavfi "[0:v]setpts=PTS-STARTPTS[a];[1:v]setpts=PTS-STARTPTS[b];[a][b]libvmaf" \
+     -f null -
+   ```
+
+   If this gives much higher VMAF than the original comparison, the issue was
+   B-frame ordering.
 
 ### Validating VMAF Setup
 

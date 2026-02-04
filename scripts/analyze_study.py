@@ -49,6 +49,32 @@ def load_encoding_metadata(study_dir: Path) -> dict[str, Any]:
         return data
 
 
+def count_video_frames(video_path: Path) -> int | None:
+    """Count actual frames in a video by decoding (more reliable than nb_frames metadata).
+
+    This is slower than reading nb_frames metadata but more accurate, especially
+    for clips extracted with stream copy that may have incorrect metadata.
+    """
+    try:
+        cmd = [
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-count_frames",
+            "-show_entries",
+            "stream=nb_read_frames",
+            "-of",
+            "csv=p=0",
+            str(video_path),
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=300)
+        return int(result.stdout.strip())
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, ValueError):
+        return None
+
+
 def find_source_clip(clip_name: str, clips_dir: Path) -> Path | None:
     """Find the source clip file in the clips directory."""
     # Try exact match first
@@ -501,6 +527,24 @@ def analyze_encoding(
                 "This may indicate incorrect clip extraction or encoding."
             )
 
+    # Get frame counts for validation (helps detect B-frame ordering issues)
+    source_info = get_video_info(source_clip)
+    encoded_info = get_video_info(encoded_file)
+    source_frames = source_info.get("frame_count", 0) if source_info else 0
+    encoded_frames = encoded_info.get("frame_count", 0) if encoded_info else 0
+
+    if source_frames > 0 and encoded_frames > 0:
+        frame_diff = abs(source_frames - encoded_frames)
+        if frame_diff > 1:  # Allow 1 frame tolerance
+            print(
+                f"  ⚠️  Frame count mismatch: source={source_frames}, encoded={encoded_frames} "
+                f"(diff={frame_diff})"
+            )
+            print(
+                "  ⚠️  This may cause inaccurate VMAF scores. Consider re-extracting clips "
+                "with lossless encoding (without --fast flag)."
+            )
+
     start_time = time.time()
 
     # Calculate bitrate from encoded file (video stream only)
@@ -544,6 +588,17 @@ def analyze_encoding(
                 f"Harmonic: {vmaf_stats['harmonic_mean']:.2f}, "
                 f"Min: {vmaf_stats['min']:.2f}"
             )
+
+            # Warn about potential frame alignment issues
+            # High std_dev with low min scores often indicates B-frame ordering problems
+            if vmaf_stats["std_dev"] > 25 and vmaf_stats["min"] < 10:
+                print("  ⚠️  WARNING: High VMAF variance with very low minimum scores detected!")
+                print("      This typically indicates frame misalignment (comparing wrong frames).")
+                print(
+                    "      Consider re-extracting source clips with lossless encoding "
+                    "(without --fast flag)."
+                )
+                result["frame_alignment_warning"] = True
         else:
             result["success"] = False
             result["error"] = "VMAF calculation failed"

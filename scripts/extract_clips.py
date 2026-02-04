@@ -71,23 +71,72 @@ def get_video_info(video_path: Path) -> dict | None:
         return None
 
 
-def extract_clip(video_path: Path, start_time: float, duration: float, output_path: Path) -> bool:
-    """Extract a clip from video using FFmpeg."""
-    cmd = [
-        "ffmpeg",
-        "-ss",
-        str(start_time),
-        "-i",
-        str(video_path),
-        "-t",
-        str(duration),
-        "-c",
-        "copy",  # Copy streams without re-encoding
-        "-avoid_negative_ts",
-        "1",
-        "-y",  # Overwrite output
-        str(output_path),
-    ]
+def extract_clip(
+    video_path: Path,
+    start_time: float,
+    duration: float,
+    output_path: Path,
+    lossless: bool = True,
+) -> bool:
+    """Extract a clip from video using FFmpeg.
+
+    Args:
+        video_path: Path to source video
+        start_time: Start time in seconds
+        duration: Clip duration in seconds
+        output_path: Path for output clip
+        lossless: If True, re-encode to lossless FFV1 codec to ensure proper frame
+                  ordering. If False, use stream copy (faster but may have B-frame
+                  ordering issues that cause incorrect VMAF scores).
+
+    Returns:
+        True if extraction succeeded, False otherwise
+
+    Note:
+        Lossless mode is STRONGLY RECOMMENDED for VMAF analysis. When using stream
+        copy (-c copy), clips with B-frames may have frame ordering issues that
+        cause libvmaf to compare wrong frames, resulting in artificially low scores.
+        FFV1 codec is used because it's mathematically lossless, widely supported,
+        and produces files with correct frame ordering. The tradeoff is larger file
+        sizes and slower extraction (~10x larger, ~5x slower than stream copy).
+    """
+    if lossless:
+        # Use FFV1 lossless codec to ensure proper frame ordering
+        # This is critical for accurate VMAF analysis - stream copy with B-frame
+        # sources can result in frame ordering issues that corrupt VMAF scores
+        cmd = [
+            "ffmpeg",
+            "-ss",
+            str(start_time),
+            "-i",
+            str(video_path),
+            "-t",
+            str(duration),
+            "-c:v",
+            "ffv1",  # Lossless codec - ensures correct frame order
+            "-level",
+            "3",  # FFV1 level 3 for multithreading support
+            "-an",  # No audio (not needed for VMAF analysis)
+            "-y",  # Overwrite output
+            str(output_path),
+        ]
+    else:
+        # Stream copy mode - faster but may have B-frame ordering issues
+        cmd = [
+            "ffmpeg",
+            "-ss",
+            str(start_time),
+            "-i",
+            str(video_path),
+            "-t",
+            str(duration),
+            "-c",
+            "copy",  # Copy streams without re-encoding
+            "-avoid_negative_ts",
+            "1",
+            "-y",  # Overwrite output
+            str(output_path),
+        ]
 
     try:
         subprocess.run(cmd, capture_output=True, check=True)
@@ -201,14 +250,14 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Extract 10 clips, 15-30 seconds each
+  # Extract 10 clips, 15-30 seconds each (lossless FFV1 - recommended for VMAF)
   python extract_clips.py --num-clips 10 --min-duration 15 --max-duration 30
 
   # Extract from 3D animation only
   python extract_clips.py --num-clips 5 --category 3d_animation --min-duration 20 --max-duration 20
 
-  # Extract only Full HD or lower, 60fps+ videos
-  python extract_clips.py --num-clips 8 --max-height 1080 --min-fps 60
+  # Fast extraction using stream copy (may cause VMAF issues with B-frame sources)
+  python extract_clips.py --num-clips 10 --min-duration 15 --max-duration 30 --fast
 
   # Reproducible extraction with seed
   python extract_clips.py --num-clips 10 --seed 42 --min-duration 10 --max-duration 30
@@ -231,6 +280,14 @@ Examples:
     parser.add_argument("--max-height", type=int, help="Maximum video height in pixels")
     parser.add_argument("--min-fps", type=float, help="Minimum FPS")
     parser.add_argument("--max-fps", type=float, help="Maximum FPS")
+
+    # Encoding options
+    parser.add_argument(
+        "--fast",
+        action="store_true",
+        help="Use stream copy instead of lossless re-encoding (faster but may cause "
+        "VMAF accuracy issues with B-frame sources due to frame ordering problems)",
+    )
 
     # Other options
     parser.add_argument("--seed", type=int, help="Random seed for reproducibility")
@@ -372,13 +429,22 @@ Examples:
     # Create output directory
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Extract clips
-    print(f"\n✂️  Extracting clips to {args.output_dir}...")
+    # Determine encoding mode
+    use_lossless = not args.fast
+    if use_lossless:
+        print(f"\n✂️  Extracting clips to {args.output_dir} (lossless FFV1 mode)...")
+        print("   Using lossless re-encoding for accurate VMAF analysis")
+        output_ext = ".mkv"
+    else:
+        print(f"\n✂️  Extracting clips to {args.output_dir} (fast stream-copy mode)...")
+        print("   ⚠️  Stream copy may cause VMAF issues with B-frame sources")
+        output_ext = ".mp4"
+
     clip_metadata = []
 
     for i, spec in enumerate(clip_specs, 1):
         # Generate clip filename
-        clip_name = f"{spec['video_id']}_clip_{i:03d}.mp4"
+        clip_name = f"{spec['video_id']}_clip_{i:03d}{output_ext}"
         output_path = args.output_dir / clip_name
 
         print(f"  [{i}/{len(clip_specs)}] {clip_name}")
@@ -390,7 +456,11 @@ Examples:
 
         # Extract clip
         success = extract_clip(
-            Path(spec["video_path"]), spec["start_time"], spec["duration"], output_path
+            Path(spec["video_path"]),
+            spec["start_time"],
+            spec["duration"],
+            output_path,
+            lossless=use_lossless,
         )
 
         if not success:
@@ -439,6 +509,8 @@ Examples:
                     "min_fps": args.min_fps,
                     "max_fps": args.max_fps,
                     "seed": args.seed,
+                    "lossless": use_lossless,
+                    "codec": "ffv1" if use_lossless else "copy",
                 },
                 "clips": clip_metadata,
             },
