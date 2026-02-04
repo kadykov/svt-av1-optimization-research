@@ -28,14 +28,15 @@ For each metric, three complementary visualizations are generated:
 
 ### Available Metrics
 
+**All metrics are normalized per-frame-per-pixel for fair comparison across different resolutions, durations, and frame rates.**
+
 - **vmaf_combined** - VMAF Mean and 5th Percentile (combined plot)
-- **bpp** - Bitrate per Pixel (compression rate)
-- **vmaf_per_bpp** - VMAF per bpp (quality efficiency)
-- **p5_vmaf_per_bpp** - P5-VMAF per bpp (worst-case quality efficiency)
-- **encoding_time_s** - Encoding time in seconds
-- **vmaf_per_time** - VMAF per encoding second (speed efficiency)
-- **vmaf_per_bpp_per_time** - Combined efficiency: VMAF per bpp per second
-- **p5_vmaf_per_bpp_per_time** - P5-VMAF combined efficiency
+- **bytes_per_frame_per_pixel** - File size efficiency (bytes per pixel per frame)
+- **bytes_per_vmaf_per_frame_per_pixel** - Inverted efficiency: "How many bytes per pixel per frame do I need to achieve this VMAF score?" (lower is better)
+- **bytes_per_p5_vmaf_per_frame_per_pixel** - Same as above, but for P5-VMAF (worst-case quality)
+- **encoding_time_per_frame_per_pixel** - Computational cost (milliseconds per megapixel per frame)
+- **bytes_per_vmaf_per_encoding_time** - Combined efficiency: bytes per VMAF point per encoding second (lower is better)
+- **bytes_per_p5_vmaf_per_encoding_time** - Combined P5-VMAF efficiency
 
 ### Per-Clip Analysis
 
@@ -167,18 +168,17 @@ python scripts/visualize_study.py baseline_sweep --no-clip-plots --no-duration-a
 Use with `--metrics` flag to generate plots for specific metrics only:
 
 - `vmaf_combined` - VMAF Mean and P5 (combined plot)
-- `bpp` - Bitrate per Pixel
-- `vmaf_per_bpp` - VMAF per bpp (quality efficiency)
-- `p5_vmaf_per_bpp` - P5-VMAF per bpp (quality efficiency)
-- `encoding_time_s` - Encoding Time
-- `vmaf_per_time` - VMAF per Encoding Second
-- `vmaf_per_bpp_per_time` - Combined efficiency metric
-- `p5_vmaf_per_bpp_per_time` - P5-VMAF combined efficiency metric
+- `bytes_per_frame_per_pixel` - File size efficiency (bytes per pixel per frame)
+- `bytes_per_vmaf_per_frame_per_pixel` - Inverted efficiency: bytes needed per VMAF point (lower is better)
+- `bytes_per_p5_vmaf_per_frame_per_pixel` - Bytes needed per P5-VMAF point (worst-case quality)
+- `encoding_time_per_frame_per_pixel` - Computational cost (ms per megapixel per frame)
+- `bytes_per_vmaf_per_encoding_time` - Combined efficiency: bytes per VMAF per second (lower is better)
+- `bytes_per_p5_vmaf_per_encoding_time` - Combined P5-VMAF efficiency
 
 **Example:**
 ```bash
 # Only generate quality efficiency plots
-python scripts/visualize_study.py baseline_sweep --metrics vmaf_per_bpp p5_vmaf_per_bpp
+python scripts/visualize_study.py baseline_sweep --metrics bytes_per_vmaf_per_frame_per_pixel bytes_per_p5_vmaf_per_frame_per_pixel
 ```
 
 ## CSV Export
@@ -197,15 +197,24 @@ Contains per-encoding metrics for all individual encodings:
 - `preset` - Encoder preset used
 - `crf` - CRF quality setting
 
+**Video Properties:**
+- `width`, `height` - Resolution in pixels
+- `fps` - Frame rate
+- `duration` - Clip duration in seconds
+- `num_frames` - Total number of frames
+- `total_pixels` - Total pixels across all frames (num_frames * width * height)
+
 **File Metrics:**
 - `file_size_mb` - Output file size in MB
+- `file_size_bytes` - Output file size in bytes
 - `bitrate_kbps` - Average bitrate (if available)
-- `bpp` - Bitrate per pixel (calculated from bitrate and resolution)
+- `bpp` - Legacy metric: bits per pixel per frame (for backward compatibility)
+- `bytes_per_frame_per_pixel` - **New normalized metric**: bytes per pixel per frame
 
 **Performance:**
 - `encoding_time_s` - Wall clock encoding time
 - `encoding_fps` - Frames per second during encoding
-- `analysis_time_s` - VMAF calculation time
+- `encoding_time_per_frame_per_pixel` - **New normalized metric**: encoding time per megapixel per frame (ms)
 
 **VMAF Metrics:**
 - `vmaf_mean` - Arithmetic mean VMAF score
@@ -218,12 +227,13 @@ Contains per-encoding metrics for all individual encodings:
 - `psnr_avg` - Average PSNR score
 - `ssim_avg` - Average SSIM score
 
-**Calculated Efficiency Metrics:**
-- `vmaf_per_bpp` - Quality per compression (VMAF / bpp)
-- `p5_vmaf_per_bpp` - Worst-case quality per compression
-- `vmaf_per_time` - Quality per encoding second
-- `vmaf_per_bpp_per_time` - Combined efficiency metric
-- `p5_vmaf_per_bpp_per_time` - P5-VMAF combined efficiency
+**Calculated Efficiency Metrics (inverted - lower is better):**
+- `bytes_per_vmaf_per_frame_per_pixel` - **New**: bytes per quality point per pixel per frame
+- `bytes_per_p5_vmaf_per_frame_per_pixel` - **New**: worst-case quality efficiency
+- `bytes_per_vmaf_per_encoding_time` - **New**: combined efficiency metric
+- `bytes_per_p5_vmaf_per_encoding_time` - **New**: combined P5-VMAF efficiency
+- `vmaf_per_bpp` - Legacy metric (kept for backward compatibility)
+- `p5_vmaf_per_bpp` - Legacy metric (kept for backward compatibility)
 
 ### Aggregated CSV (`<study>_aggregated.csv`)
 
@@ -332,12 +342,16 @@ import pandas as pd
 # Load aggregated data (averaged across clips)
 df = pd.read_csv('results/baseline_sweep/baseline_sweep_aggregated.csv')
 
-# Find configurations with VMAF > 90 and low bpp
-efficient = df[(df['vmaf_mean'] > 90) & (df['bpp'] < 0.03)]
-print(efficient[['preset', 'crf', 'vmaf_mean', 'bpp', 'vmaf_per_bpp']].head())
+# Find configurations with VMAF > 90 and efficient compression
+efficient = df[(df['vmaf_mean'] > 90) & (df['bytes_per_frame_per_pixel'] < 0.004)]
+print(efficient[['preset', 'crf', 'vmaf_mean', 'bytes_per_frame_per_pixel', 'bytes_per_vmaf_per_frame_per_pixel']].head())
 
-# Compare encoding time across presets
-print(df.groupby('preset')['encoding_time_s'].mean())
+# Compare encoding time across presets (normalized)
+print(df.groupby('preset')['encoding_time_per_frame_per_pixel'].mean())
+
+# Find best overall efficiency (lower is better)
+best_efficiency = df.nsmallest(5, 'bytes_per_vmaf_per_encoding_time')
+print(best_efficiency[['preset', 'crf', 'vmaf_mean', 'bytes_per_vmaf_per_encoding_time']])
 ```
 
 ## Integration with Other Studies
@@ -411,19 +425,60 @@ WebP is a modern image format. Most image viewers support it, but if yours doesn
 - **VMAF P5**: 5th percentile - worst 5% of frames (indicates quality floor)
 - **VMAF Harmonic Mean**: Another worst-case indicator (emphasizes low scores)
 
-### Efficiency Metrics
-- **bpp (bits per pixel)**: Bitrate / (width × height × fps) - measures compression rate
-- **vmaf_per_bpp**: Quality efficiency - how much quality per bit (higher is better)
-- **p5_vmaf_per_bpp**: Worst-case quality efficiency
-- **vmaf_per_time**: Quality per encoding second (speed efficiency)
-- **vmaf_per_bpp_per_time**: Combined efficiency - quality per compression per time
+### File Size Metrics (normalized per-frame-per-pixel)
+- **bytes_per_frame_per_pixel**: File size divided by total pixels across all frames
+  - Formula: `file_size_bytes / (num_frames * width * height)`
+  - Allows fair comparison across different resolutions, durations, and frame rates
+  - Lower values = better compression
+
+### Efficiency Metrics (inverted form - lower is better)
+- **bytes_per_vmaf_per_frame_per_pixel**: "How many bytes per pixel per frame do I need to achieve this VMAF score?"
+  - Formula: `bytes_per_frame_per_pixel / vmaf_mean`
+  - Lower values = more efficient (fewer bytes needed for same quality)
+  - Intuitive interpretation: cost per quality point
+
+- **bytes_per_p5_vmaf_per_frame_per_pixel**: Same as above, but for worst-case (P5) VMAF
+  - Ensures good quality even in difficult frames
+
+### Encoding Time Metrics (normalized)
+- **encoding_time_per_frame_per_pixel**: Computational cost per frame per megapixel (in milliseconds)
+  - Formula: `(encoding_time_s * 1000) / (total_pixels / 1_000_000)`
+  - Allows comparison of encoding speed across different video complexities
+  - Lower values = faster encoding
+
+### Combined Efficiency Metrics
+- **bytes_per_vmaf_per_encoding_time**: Overall efficiency considering both file size and encoding time
+  - Formula: `file_size_bytes / vmaf_mean / encoding_time_s`
+  - The per-frame-per-pixel terms cancel out mathematically
+  - Lower values = better overall efficiency
+  - Represents: "bytes per quality point per second of encoding time"
+
+### Why Normalized Metrics?
+
+Without normalization, raw metrics are misleading:
+- **Encoding time**: A 4K 60fps video naturally takes longer than 720p 30fps
+- **Bitrate**: Higher frame rates require more bits for same quality
+- **File size**: Longer videos have larger files
+
+Normalized metrics allow fair comparisons:
+- Same preset on 1080p vs 4K clips
+- Same CRF on 24fps vs 60fps content
+- Same configuration on 5s vs 30s clips
 
 ### Interpreting Values
-- **High vmaf_per_bpp** (>3000): Very efficient compression
-- **High vmaf_per_time** (>20): Fast encoding with good quality
-- **Low bpp** (<0.03): Highly compressed, check quality metrics
-- **High VMAF** (>95): Transparent or near-transparent quality
-- **Low P5-VMAF gap** (mean - p5 < 5): Consistent quality across frames
+- **bytes_per_frame_per_pixel** (0.002 - 0.012): Typical range for AV1 encoding
+  - < 0.003: Highly compressed (check quality!)
+  - 0.003-0.006: Good compression with decent quality
+  - > 0.010: High bitrate, near-lossless
+
+- **bytes_per_vmaf_per_frame_per_pixel** (~0.00003-0.0001): Efficiency metric
+  - Lower is better - fewer bytes needed per quality point
+  - Compare different configurations to find sweet spots
+
+- **encoding_time_per_frame_per_pixel** (7-130 ms/megapixel): Computational cost
+  - < 20: Fast presets (8-10)
+  - 20-60: Balanced presets (5-7)
+  - > 100: Slow, high-quality presets (2-4)
 
 ## Future Enhancements
 

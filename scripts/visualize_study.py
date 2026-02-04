@@ -8,6 +8,18 @@ Each metric gets three visualizations:
   2. Line chart: Metric vs CRF (one line per preset)
   3. Line chart: Metric vs Preset (one line per CRF)
 
+All metrics are normalized per-frame-per-pixel for fair comparison across:
+  - Different resolutions (e.g., 1080p vs 4K)
+  - Different durations (e.g., 5s vs 30s clips)
+  - Different frame rates (e.g., 24fps vs 60fps)
+
+Key metrics:
+  - bytes_per_frame_per_pixel: File size efficiency
+  - encoding_time_per_frame_per_pixel: Computational cost
+  - bytes_per_vmaf_per_frame_per_pixel: Inverted efficiency (lower = better)
+    "How many bytes per pixel do I need to achieve this VMAF score?"
+  - bytes_per_vmaf_per_encoding_time: Combined efficiency (after cancellation)
+
 Design principles:
   - One figure per file (no subfigures)
   - Colorblind-friendly palettes (viridis)
@@ -61,15 +73,16 @@ sns.set_theme(style="whitegrid")
 
 # Metrics to analyze with their display names and higher_is_better flag
 # Special metric: "vmaf_combined" generates plots with both mean and p5
+# All metrics are normalized per-frame-per-pixel for fair comparison across different
+# resolutions, durations, and frame rates
 METRICS = [
     ("vmaf_combined", "VMAF Score (Mean and P5)", True),  # Combined plot
-    ("bpp", "Bitrate per Pixel (bpp)", False),
-    ("vmaf_per_bpp", "VMAF per bpp (Quality Efficiency)", True),
-    ("p5_vmaf_per_bpp", "P5-VMAF per bpp (Quality Efficiency)", True),
-    ("encoding_time_s", "Encoding Time (seconds)", False),
-    ("vmaf_per_time", "VMAF per Encoding Second", True),
-    ("vmaf_per_bpp_per_time", "VMAF per bpp per Encoding Second", True),
-    ("p5_vmaf_per_bpp_per_time", "P5-VMAF per bpp per Encoding Second", True),
+    ("bytes_per_frame_per_pixel", "Bytes per Frame per Pixel", False),
+    ("bytes_per_vmaf_per_frame_per_pixel", "Bytes per VMAF Point per Frame per Pixel", False),
+    ("bytes_per_p5_vmaf_per_frame_per_pixel", "Bytes per P5-VMAF Point per Frame per Pixel", False),
+    ("encoding_time_per_frame_per_pixel", "Encoding Time per Frame per Megapixel (ms)", False),
+    ("bytes_per_vmaf_per_encoding_time", "Bytes per VMAF Point per Encoding Second", False),
+    ("bytes_per_p5_vmaf_per_encoding_time", "Bytes per P5-VMAF Point per Encoding Second", False),
 ]
 
 
@@ -121,13 +134,32 @@ def prepare_dataframe(analysis_data: dict[str, Any]) -> pd.DataFrame:
         width = clip_info.get("source_width", 0)
         height = clip_info.get("source_height", 0)
         fps = clip_info.get("source_fps", 0)
+        duration = clip_info.get("duration", 0)
 
         file_size_bytes = encoding["file_size_bytes"]
         bitrate_kbps = encoding.get("bitrate_kbps", 0) or 0
         encoding_time_s = encoding.get("encoding_time_seconds", 0) or 0
 
-        # Calculate bitrate per pixel (bpp)
-        # bpp = bitrate / (width * height * fps)
+        # Calculate total frames and pixels
+        num_frames = duration * fps if duration and fps else 0
+        total_pixels = num_frames * width * height if num_frames and width and height else 0
+
+        # Calculate normalized metrics
+        # Bytes per frame per pixel: measures file size efficiency
+        bytes_per_frame_per_pixel = 0.0
+        if total_pixels > 0:
+            bytes_per_frame_per_pixel = file_size_bytes / total_pixels
+
+        # Encoding time per frame per megapixel (in milliseconds)
+        # Measures computational cost normalized by video complexity
+        encoding_time_per_frame_per_pixel = 0.0
+        if total_pixels > 0 and encoding_time_s > 0:
+            # Convert to milliseconds per megapixel for readability
+            encoding_time_per_frame_per_pixel = (encoding_time_s * 1000) / (
+                total_pixels / 1_000_000
+            )
+
+        # Legacy bpp for backward compatibility (bits per pixel per frame)
         bpp = 0.0
         if bitrate_kbps and width and height and fps:
             bitrate_bps = bitrate_kbps * 1000
@@ -141,17 +173,23 @@ def prepare_dataframe(analysis_data: dict[str, Any]) -> pd.DataFrame:
             # Parameters
             "preset": encoding["parameters"]["preset"],
             "crf": encoding["parameters"]["crf"],
-            # Resolution
+            # Resolution and duration
             "width": width,
             "height": height,
             "fps": fps,
+            "duration": duration,
+            "num_frames": num_frames,
+            "total_pixels": total_pixels,
             # File metrics
             "file_size_mb": file_size_bytes / (1024 * 1024),
+            "file_size_bytes": file_size_bytes,
             "bitrate_kbps": bitrate_kbps,
-            "bpp": bpp,
-            # Encoding time
+            "bpp": bpp,  # Legacy metric
+            "bytes_per_frame_per_pixel": bytes_per_frame_per_pixel,
+            # Performance
             "encoding_time_s": encoding_time_s,
             "encoding_fps": encoding.get("encoding_fps", 0),
+            "encoding_time_per_frame_per_pixel": encoding_time_per_frame_per_pixel,
         }
 
         # VMAF metrics
@@ -186,39 +224,50 @@ def prepare_dataframe(analysis_data: dict[str, Any]) -> pd.DataFrame:
     if df.empty:
         return df
 
-    # Calculate derived metrics
-    # VMAF per bpp (quality efficiency)
+    # Calculate derived efficiency metrics (inverted form)
+    # These metrics answer: "How many bytes per pixel per frame do I need to achieve this quality?"
+    # Lower values = more efficient (fewer bytes needed for same quality)
+
+    # Bytes per VMAF point per frame per pixel (file size efficiency)
+    # This tells us how many bytes per pixel we need to allocate per VMAF score point
+    df["bytes_per_vmaf_per_frame_per_pixel"] = np.where(
+        df["vmaf_mean"] > 0,
+        df["bytes_per_frame_per_pixel"] / df["vmaf_mean"],
+        np.nan,
+    )
+
+    # Bytes per P5-VMAF point per frame per pixel (worst-case quality efficiency)
+    df["bytes_per_p5_vmaf_per_frame_per_pixel"] = np.where(
+        df["vmaf_p5"] > 0,
+        df["bytes_per_frame_per_pixel"] / df["vmaf_p5"],
+        np.nan,
+    )
+
+    # Combined efficiency: Bytes per VMAF point per encoding second
+    # This tells us the file size cost per quality point per second of encoding time
+    # The per-frame-per-pixel terms cancel out: (bytes/frame/pixel / vmaf) / (time/frame/pixel) = bytes / vmaf / time
+    df["bytes_per_vmaf_per_encoding_time"] = np.where(
+        (df["vmaf_mean"] > 0) & (df["encoding_time_s"] > 0),
+        df["file_size_bytes"] / df["vmaf_mean"] / df["encoding_time_s"],
+        np.nan,
+    )
+
+    # Combined efficiency with P5-VMAF (worst-case)
+    df["bytes_per_p5_vmaf_per_encoding_time"] = np.where(
+        (df["vmaf_p5"] > 0) & (df["encoding_time_s"] > 0),
+        df["file_size_bytes"] / df["vmaf_p5"] / df["encoding_time_s"],
+        np.nan,
+    )
+
+    # Legacy metrics for backward compatibility
     df["vmaf_per_bpp"] = np.where(
         df["bpp"] > 0,
         df["vmaf_mean"] / df["bpp"],
         np.nan,
     )
-
-    # P5-VMAF per bpp (quality efficiency for worst-case frames)
     df["p5_vmaf_per_bpp"] = np.where(
         df["bpp"] > 0,
         df["vmaf_p5"] / df["bpp"],
-        np.nan,
-    )
-
-    # VMAF per encoding time
-    df["vmaf_per_time"] = np.where(
-        df["encoding_time_s"] > 0,
-        df["vmaf_mean"] / df["encoding_time_s"],
-        np.nan,
-    )
-
-    # VMAF per bpp per encoding time (combined efficiency)
-    df["vmaf_per_bpp_per_time"] = np.where(
-        (df["bpp"] > 0) & (df["encoding_time_s"] > 0),
-        df["vmaf_mean"] / df["bpp"] / df["encoding_time_s"],
-        np.nan,
-    )
-
-    # P5-VMAF per bpp per encoding time (combined efficiency for worst-case frames)
-    df["p5_vmaf_per_bpp_per_time"] = np.where(
-        (df["bpp"] > 0) & (df["encoding_time_s"] > 0),
-        df["vmaf_p5"] / df["bpp"] / df["encoding_time_s"],
         np.nan,
     )
 
@@ -604,9 +653,13 @@ def plot_clip_duration_analysis(
                     "duration": duration,
                     "vmaf_mean": clip_data["vmaf_mean"].mean(),
                     "vmaf_p5": clip_data["vmaf_p5"].mean(),
-                    "vmaf_per_bpp": clip_data["vmaf_per_bpp"].mean(),
-                    "p5_vmaf_per_bpp": clip_data["p5_vmaf_per_bpp"].mean(),
-                    "bpp": clip_data["bpp"].mean(),
+                    "bytes_per_vmaf_per_frame_per_pixel": clip_data[
+                        "bytes_per_vmaf_per_frame_per_pixel"
+                    ].mean(),
+                    "bytes_per_p5_vmaf_per_frame_per_pixel": clip_data[
+                        "bytes_per_p5_vmaf_per_frame_per_pixel"
+                    ].mean(),
+                    "bytes_per_frame_per_pixel": clip_data["bytes_per_frame_per_pixel"].mean(),
                 }
             )
 
@@ -618,8 +671,8 @@ def plot_clip_duration_analysis(
 
     # Define metrics to plot with both x-axis types
     duration_metrics = [
-        ("vmaf_per_bpp", "VMAF per bpp (Quality Efficiency)"),
-        ("p5_vmaf_per_bpp", "P5-VMAF per bpp (Quality Efficiency)"),
+        ("bytes_per_vmaf_per_frame_per_pixel", "Bytes per VMAF Point per Frame per Pixel"),
+        ("bytes_per_p5_vmaf_per_frame_per_pixel", "Bytes per P5-VMAF Point per Frame per Pixel"),
     ]
 
     x_axis_configs = [
@@ -706,8 +759,8 @@ def plot_clip_comparison(
     # Metrics to compare per clip
     clip_metrics = [
         ("vmaf_mean", "VMAF Mean Score"),
-        ("vmaf_per_bpp", "VMAF per bpp"),
-        ("bpp", "Bitrate per Pixel"),
+        ("bytes_per_vmaf_per_frame_per_pixel", "Bytes per VMAF Point per Frame per Pixel"),
+        ("bytes_per_frame_per_pixel", "Bytes per Frame per Pixel"),
     ]
 
     colors, markers = get_line_colors_and_markers(len(clips))
@@ -817,23 +870,49 @@ def generate_summary_report(
             f.write("Highest VMAF Mean:\n")
             f.write(f"  Preset {int(best['preset'])}, CRF {int(best['crf'])}\n")
             f.write(f"  VMAF: {best['vmaf_mean']:.2f}\n")
-            if "bpp" in agg_df.columns:
-                f.write(f"  bpp: {best['bpp']:.4f}\n")
+            if "bytes_per_frame_per_pixel" in agg_df.columns:
+                f.write(f"  Bytes/frame/pixel: {best['bytes_per_frame_per_pixel']:.6f}\n")
             f.write("\n")
 
-        if "vmaf_per_bpp" in agg_df.columns and not agg_df["vmaf_per_bpp"].isna().all():
-            best = agg_df.loc[agg_df["vmaf_per_bpp"].idxmax()]
-            f.write("Best Quality Efficiency (VMAF per bpp):\n")
+        if (
+            "bytes_per_vmaf_per_frame_per_pixel" in agg_df.columns
+            and not agg_df["bytes_per_vmaf_per_frame_per_pixel"].isna().all()
+        ):
+            best = agg_df.loc[
+                agg_df["bytes_per_vmaf_per_frame_per_pixel"].idxmin()
+            ]  # Lower is better
+            f.write("Best File Size Efficiency (Lowest Bytes per VMAF per Frame per Pixel):\n")
             f.write(f"  Preset {int(best['preset'])}, CRF {int(best['crf'])}\n")
-            f.write(f"  VMAF per bpp: {best['vmaf_per_bpp']:.2f}\n")
-            f.write(f"  VMAF: {best['vmaf_mean']:.2f}, bpp: {best['bpp']:.4f}\n")
+            f.write(
+                f"  Bytes per VMAF per frame per pixel: {best['bytes_per_vmaf_per_frame_per_pixel']:.8f}\n"
+            )
+            f.write(
+                f"  VMAF: {best['vmaf_mean']:.2f}, Bytes/frame/pixel: {best['bytes_per_frame_per_pixel']:.6f}\n"
+            )
             f.write("\n")
 
-        if "bpp" in agg_df.columns:
-            smallest = agg_df.loc[agg_df["bpp"].idxmin()]
-            f.write("Lowest Bitrate (bpp):\n")
+        if (
+            "bytes_per_vmaf_per_encoding_time" in agg_df.columns
+            and not agg_df["bytes_per_vmaf_per_encoding_time"].isna().all()
+        ):
+            best = agg_df.loc[
+                agg_df["bytes_per_vmaf_per_encoding_time"].idxmin()
+            ]  # Lower is better
+            f.write("Best Overall Efficiency (Lowest Bytes per VMAF per Encoding Second):\n")
+            f.write(f"  Preset {int(best['preset'])}, CRF {int(best['crf'])}\n")
+            f.write(
+                f"  Bytes per VMAF per second: {best['bytes_per_vmaf_per_encoding_time']:.2f}\n"
+            )
+            f.write(
+                f"  VMAF: {best['vmaf_mean']:.2f}, Encoding time: {best['encoding_time_s']:.2f}s\n"
+            )
+            f.write("\n")
+
+        if "bytes_per_frame_per_pixel" in agg_df.columns:
+            smallest = agg_df.loc[agg_df["bytes_per_frame_per_pixel"].idxmin()]
+            f.write("Smallest File Size (Lowest Bytes per Frame per Pixel):\n")
             f.write(f"  Preset {int(smallest['preset'])}, CRF {int(smallest['crf'])}\n")
-            f.write(f"  bpp: {smallest['bpp']:.4f}\n")
+            f.write(f"  Bytes/frame/pixel: {smallest['bytes_per_frame_per_pixel']:.6f}\n")
             if "vmaf_mean" in agg_df.columns:
                 f.write(f"  VMAF: {smallest['vmaf_mean']:.2f}\n")
             f.write("\n")
@@ -852,20 +931,22 @@ Examples:
   %(prog)s baseline_sweep
 
   # Analyze specific metrics only
-  %(prog)s baseline_sweep --metrics vmaf_mean vmaf_per_bpp
+  %(prog)s baseline_sweep --metrics vmaf_combined bytes_per_vmaf_per_frame_per_pixel
 
   # Skip per-clip comparison plots
   %(prog)s baseline_sweep --no-clip-plots
 
-Available metrics:
-  vmaf_combined       - VMAF Mean and P5 (combined plot)
-  bpp                 - Bitrate per Pixel
-  vmaf_per_bpp        - VMAF per bpp (quality efficiency)
-  p5_vmaf_per_bpp     - P5-VMAF per bpp (quality efficiency)
-  encoding_time_s     - Encoding Time
-  vmaf_per_time       - VMAF per Encoding Second
-  vmaf_per_bpp_per_time - Combined efficiency metric
-  p5_vmaf_per_bpp_per_time - P5-VMAF combined efficiency metric
+Available metrics (all normalized per-frame-per-pixel):
+  vmaf_combined                         - VMAF Mean and P5 (combined plot)
+  bytes_per_frame_per_pixel             - File size efficiency (bytes per pixel per frame)
+  bytes_per_vmaf_per_frame_per_pixel    - Bytes needed per VMAF point per pixel per frame
+  bytes_per_p5_vmaf_per_frame_per_pixel - Bytes needed per P5-VMAF point (worst-case)
+  encoding_time_per_frame_per_pixel     - Computational cost (ms per megapixel per frame)
+  bytes_per_vmaf_per_encoding_time      - Combined efficiency (bytes per VMAF per second)
+  bytes_per_p5_vmaf_per_encoding_time   - Combined P5-VMAF efficiency
+
+Note: All metrics are normalized by frame count and pixel count for fair comparison
+      across different resolutions, durations, and frame rates.
         """,
     )
 

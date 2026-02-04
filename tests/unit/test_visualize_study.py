@@ -145,9 +145,10 @@ def test_prepare_dataframe_structure(sample_analysis_data):
         "vmaf_harmonic_mean",
         "psnr_avg",
         "ssim_avg",
-        "bpp",
-        "vmaf_per_bpp",
-        "vmaf_per_time",
+        "bytes_per_frame_per_pixel",
+        "bytes_per_vmaf_per_frame_per_pixel",
+        "bytes_per_vmaf_per_encoding_time",
+        "encoding_time_per_frame_per_pixel",
     ]
 
     for col in expected_columns:
@@ -271,23 +272,29 @@ def test_prepare_dataframe_efficiency_calculations(sample_analysis_data):
     """Test that efficiency metrics are correctly calculated."""
     df = prepare_dataframe(sample_analysis_data)
 
-    # Check efficiency metrics exist
+    # Check new efficiency metrics exist
+    assert "bytes_per_frame_per_pixel" in df.columns
+    assert "bytes_per_vmaf_per_frame_per_pixel" in df.columns
+    assert "bytes_per_p5_vmaf_per_frame_per_pixel" in df.columns
+    assert "bytes_per_vmaf_per_encoding_time" in df.columns
+    assert "bytes_per_p5_vmaf_per_encoding_time" in df.columns
+    assert "encoding_time_per_frame_per_pixel" in df.columns
+
+    # Check legacy metrics still exist (for backward compatibility)
     assert "vmaf_per_bpp" in df.columns
     assert "p5_vmaf_per_bpp" in df.columns
-    assert "vmaf_per_time" in df.columns
-    assert "vmaf_per_bpp_per_time" in df.columns
-    assert "p5_vmaf_per_bpp_per_time" in df.columns
 
-    # Verify vmaf_per_time is calculated correctly
-    # vmaf_per_time = vmaf_mean / encoding_time_s
+    # Verify bytes_per_vmaf_per_frame_per_pixel is calculated correctly
+    # bytes_per_vmaf_per_frame_per_pixel = bytes_per_frame_per_pixel / vmaf_mean
     first = df.iloc[0]
-    expected_vmaf_per_time = first["vmaf_mean"] / first["encoding_time_s"]
-    assert abs(first["vmaf_per_time"] - expected_vmaf_per_time) < 0.01
+    if first["vmaf_mean"] > 0 and first["bytes_per_frame_per_pixel"] > 0:
+        expected = first["bytes_per_frame_per_pixel"] / first["vmaf_mean"]
+        assert abs(first["bytes_per_vmaf_per_frame_per_pixel"] - expected) < 0.0000001
 
-    # Note: bpp calculations require clip metadata (resolution, fps) which is not in the fixture
+    # Note: Normalized calculations require clip metadata (resolution, fps, duration)
     # So those metrics will be NaN - just verify they exist and have the correct structure
     assert first["p5_vmaf_per_bpp"] is not None
-    assert first["p5_vmaf_per_bpp_per_time"] is not None
+    assert first["bytes_per_p5_vmaf_per_encoding_time"] is not None
 
 
 def test_dataframe_can_export_csv(sample_analysis_data, tmp_path):

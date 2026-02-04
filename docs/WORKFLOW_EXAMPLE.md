@@ -83,22 +83,21 @@ For each metric, three complementary views are generated:
 
 #### Available Metrics
 
-Each metric trio covers:
+Each metric trio covers (all normalized per-frame-per-pixel):
 - **vmaf_combined** - VMAF Mean and P5 (combined plot showing both)
-- **bpp** - Bitrate per pixel (compression rate)
-- **vmaf_per_bpp** - Quality efficiency (VMAF / bpp)
-- **p5_vmaf_per_bpp** - Worst-case quality efficiency
-- **encoding_time_s** - Encoding time
-- **vmaf_per_time** - Quality per encoding second
-- **vmaf_per_bpp_per_time** - Combined efficiency metric
-- **p5_vmaf_per_bpp_per_time** - P5-VMAF combined efficiency
+- **bytes_per_frame_per_pixel** - File size efficiency (bytes per pixel per frame)
+- **bytes_per_vmaf_per_frame_per_pixel** - Inverted efficiency: bytes needed per VMAF point (lower is better)
+- **bytes_per_p5_vmaf_per_frame_per_pixel** - Worst-case quality efficiency
+- **encoding_time_per_frame_per_pixel** - Computational cost (ms per megapixel per frame)
+- **bytes_per_vmaf_per_encoding_time** - Combined efficiency: bytes per VMAF per second (lower is better)
+- **bytes_per_p5_vmaf_per_encoding_time** - Combined P5-VMAF efficiency
 
 #### Per-Clip Comparison Plots
 
 These show content-dependent behavior:
 - `baseline_sweep_clip_vmaf_mean.webp` - Quality by clip and preset
-- `baseline_sweep_clip_bpp.webp` - Compression by clip and preset
-- `baseline_sweep_clip_vmaf_per_bpp.webp` - Efficiency by clip and preset
+- `baseline_sweep_clip_bytes_per_frame_per_pixel.webp` - Compression by clip and preset
+- `baseline_sweep_clip_bytes_per_vmaf_per_frame_per_pixel.webp` - Efficiency by clip and preset
 
 **Insights:**
 - Which clips are "hard to encode"
@@ -129,11 +128,14 @@ Per-encoding metrics for all individual encodings. Each row represents one encod
 Contains:
 - Identifiers: output_file, source_clip
 - Parameters: preset, crf
-- File metrics: file_size_mb, bitrate_kbps, bpp (bitrate per pixel)
-- Performance: encoding_time_s, encoding_fps, analysis_time_s
+- Video properties: width, height, fps, duration, num_frames, total_pixels
+- File metrics: file_size_mb, file_size_bytes, bitrate_kbps
+- **New normalized metrics**: bytes_per_frame_per_pixel, encoding_time_per_frame_per_pixel
+- Performance: encoding_time_s, encoding_fps
 - VMAF: mean, harmonic_mean, min, p1, p5, p25, median, p75, p95, std
 - Other metrics: psnr_avg, ssim_avg
-- Efficiency: vmaf_per_bpp, p5_vmaf_per_bpp, vmaf_per_time, vmaf_per_bpp_per_time, p5_vmaf_per_bpp_per_time
+- **New efficiency metrics**: bytes_per_vmaf_per_frame_per_pixel, bytes_per_p5_vmaf_per_frame_per_pixel, bytes_per_vmaf_per_encoding_time, bytes_per_p5_vmaf_per_encoding_time
+- Legacy metrics (for backward compatibility): bpp, vmaf_per_bpp, p5_vmaf_per_bpp
 
 **2. `baseline_sweep_aggregated.csv`**
 
@@ -148,20 +150,20 @@ import pandas as pd
 # Load aggregated data for parameter comparison
 agg_df = pd.read_csv('results/baseline_sweep/baseline_sweep_aggregated.csv')
 
-# Find best efficiency configurations (VMAF > 90, low bpp)
-efficient = agg_df[(agg_df['vmaf_mean'] > 90) & (agg_df['bpp'] < 0.03)]
-print(efficient[['preset', 'crf', 'vmaf_mean', 'bpp', 'vmaf_per_bpp']])
+# Find best efficiency configurations (VMAF > 90, efficient compression)
+efficient = agg_df[(agg_df['vmaf_mean'] > 90) & (agg_df['bytes_per_frame_per_pixel'] < 0.004)]
+print(efficient[['preset', 'crf', 'vmaf_mean', 'bytes_per_frame_per_pixel', 'bytes_per_vmaf_per_frame_per_pixel']])
 
-# Compare presets at same CRF
+# Compare presets at same CRF (using normalized encoding time)
 p6_crf30 = agg_df[(agg_df['preset'] == 6) & (agg_df['crf'] == 30)]
 p10_crf30 = agg_df[(agg_df['preset'] == 10) & (agg_df['crf'] == 30)]
-print(f"Preset 6: {p6_crf30['encoding_time_s'].values[0]:.2f}s")
-print(f"Preset 10: {p10_crf30['encoding_time_s'].values[0]:.2f}s")
+print(f"Preset 6: {p6_crf30['encoding_time_per_frame_per_pixel'].values[0]:.2f} ms/megapixel")
+print(f"Preset 10: {p10_crf30['encoding_time_per_frame_per_pixel'].values[0]:.2f} ms/megapixel")
 
 # Load raw data for per-clip analysis
 raw_df = pd.read_csv('results/baseline_sweep/baseline_sweep_raw_data.csv')
-# Find which clips are hardest to encode efficiently
-clip_efficiency = raw_df.groupby('source_clip')['vmaf_per_bpp'].mean().sort_values()
+# Find which clips are hardest to encode efficiently (higher is worse)
+clip_efficiency = raw_df.groupby('source_clip')['bytes_per_vmaf_per_frame_per_pixel'].mean().sort_values(ascending=False)
 print("Hardest to encode clips:")
 print(clip_efficiency.head())
 ```
@@ -176,8 +178,9 @@ Human-readable summary including:
 - Aggregated statistics (ranges for all key metrics)
 - Best configurations:
   - Highest VMAF Mean
-  - Best Quality Efficiency (VMAF per bpp)
-  - Lowest Bitrate (bpp)
+  - Best File Size Efficiency (lowest bytes per VMAF per frame per pixel)
+  - Best Overall Efficiency (lowest bytes per VMAF per encoding second)
+  - Smallest File Size (lowest bytes per frame per pixel)
 
 **Example output:**
 ```
