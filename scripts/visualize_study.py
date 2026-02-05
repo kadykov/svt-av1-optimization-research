@@ -756,15 +756,74 @@ def plot_clip_comparison(
         print("Skipping clip comparison (only one clip)", file=sys.stderr)
         return
 
-    # Metrics to compare per clip
+    # Metrics to compare per clip (excluding VMAF which gets special treatment)
     clip_metrics = [
-        ("vmaf_mean", "VMAF Mean Score"),
         ("bytes_per_vmaf_per_frame_per_pixel", "Bytes per VMAF Point per Frame per Pixel"),
         ("bytes_per_frame_per_pixel", "Bytes per Frame per Pixel"),
     ]
 
     colors, markers = get_line_colors_and_markers(len(clips))
 
+    # Special handling for VMAF: plot mean and P5 together
+    if "vmaf_mean" in df.columns and "vmaf_p5" in df.columns:
+        # Aggregate by clip and preset (mean over CRF values)
+        clip_data_mean = df.groupby(["source_clip", "preset"])["vmaf_mean"].mean().reset_index()
+        clip_data_p5 = df.groupby(["source_clip", "preset"])["vmaf_p5"].mean().reset_index()
+
+        fig, ax = plt.subplots(figsize=(10, 7))
+
+        # Plot VMAF mean (solid lines, filled markers)
+        for clip, color, marker in zip(clips, colors, markers, strict=True):
+            subset = clip_data_mean[clip_data_mean["source_clip"] == clip].sort_values("preset")
+            if subset.empty:
+                continue
+            # Shorten clip name for legend
+            clip_short = clip.replace(".mp4", "").replace(".mkv", "")
+            ax.plot(
+                subset["preset"],
+                subset["vmaf_mean"],
+                marker=marker,
+                linestyle="-",
+                linewidth=2,
+                markersize=8,
+                label=f"{clip_short} (Mean)",
+                color=color,
+                markerfacecolor=color,
+            )
+
+        # Plot VMAF P5 (dashed lines, open markers)
+        for clip, color, marker in zip(clips, colors, markers, strict=True):
+            subset = clip_data_p5[clip_data_p5["source_clip"] == clip].sort_values("preset")
+            if subset.empty:
+                continue
+            # Shorten clip name for legend
+            clip_short = clip.replace(".mp4", "").replace(".mkv", "")
+            ax.plot(
+                subset["preset"],
+                subset["vmaf_p5"],
+                marker=marker,
+                linestyle="--",
+                linewidth=2,
+                markersize=8,
+                label=f"{clip_short} (P5)",
+                color=color,
+                markerfacecolor="none",
+                markeredgewidth=2,
+            )
+
+        ax.set_xlabel("Preset (lower = slower, higher quality)")
+        ax.set_ylabel("VMAF Score")
+        ax.set_title(f"{study_name}: VMAF Score (Mean and P5) by Clip vs Preset")
+        ax.legend(title="Clip", loc="best", fontsize=7, ncol=2)
+        ax.grid(True, alpha=0.3)
+        ax.set_xticks(sorted(df["preset"].unique()))
+
+        output_path = output_dir / f"{study_name}_clip_vmaf_combined.webp"
+        plt.savefig(output_path)
+        print(f"  Saved: {output_path}")
+        plt.close(fig)
+
+    # Plot other metrics
     for metric, metric_label in clip_metrics:
         if metric not in df.columns:
             continue
@@ -798,6 +857,128 @@ def plot_clip_comparison(
         ax.set_xticks(sorted(df["preset"].unique()))
 
         output_path = output_dir / f"{study_name}_clip_{metric}.webp"
+        plt.savefig(output_path)
+        print(f"  Saved: {output_path}")
+        plt.close(fig)
+
+
+def plot_clip_comparison_vs_crf(
+    df: pd.DataFrame,
+    output_dir: Path,
+    study_name: str,
+) -> None:
+    """
+    Plot per-clip comparison: one line per clip, x-axis = CRF.
+
+    Twin of plot_clip_comparison but with CRF on x-axis instead of preset.
+    Uses line plots for clearer trend comparison.
+    """
+    clips = df["source_clip"].unique()
+    if len(clips) < 2:
+        print("Skipping clip comparison vs CRF (only one clip)", file=sys.stderr)
+        return
+
+    # Same metrics as plot_clip_comparison (excluding VMAF which gets special treatment)
+    clip_metrics = [
+        ("bytes_per_vmaf_per_frame_per_pixel", "Bytes per VMAF Point per Frame per Pixel"),
+        ("bytes_per_frame_per_pixel", "Bytes per Frame per Pixel"),
+    ]
+
+    colors, markers = get_line_colors_and_markers(len(clips))
+
+    # Special handling for VMAF: plot mean and P5 together
+    if "vmaf_mean" in df.columns and "vmaf_p5" in df.columns:
+        # Aggregate by clip and CRF (mean over preset values)
+        clip_data_mean = df.groupby(["source_clip", "crf"])["vmaf_mean"].mean().reset_index()
+        clip_data_p5 = df.groupby(["source_clip", "crf"])["vmaf_p5"].mean().reset_index()
+
+        fig, ax = plt.subplots(figsize=(10, 7))
+
+        # Plot VMAF mean (solid lines, filled markers)
+        for clip, color, marker in zip(clips, colors, markers, strict=True):
+            subset = clip_data_mean[clip_data_mean["source_clip"] == clip].sort_values("crf")
+            if subset.empty:
+                continue
+            # Shorten clip name for legend
+            clip_short = clip.replace(".mp4", "").replace(".mkv", "")
+            ax.plot(
+                subset["crf"],
+                subset["vmaf_mean"],
+                marker=marker,
+                linestyle="-",
+                linewidth=2,
+                markersize=8,
+                label=f"{clip_short} (Mean)",
+                color=color,
+                markerfacecolor=color,
+            )
+
+        # Plot VMAF P5 (dashed lines, open markers)
+        for clip, color, marker in zip(clips, colors, markers, strict=True):
+            subset = clip_data_p5[clip_data_p5["source_clip"] == clip].sort_values("crf")
+            if subset.empty:
+                continue
+            # Shorten clip name for legend
+            clip_short = clip.replace(".mp4", "").replace(".mkv", "")
+            ax.plot(
+                subset["crf"],
+                subset["vmaf_p5"],
+                marker=marker,
+                linestyle="--",
+                linewidth=2,
+                markersize=8,
+                label=f"{clip_short} (P5)",
+                color=color,
+                markerfacecolor="none",
+                markeredgewidth=2,
+            )
+
+        ax.set_xlabel("CRF (lower = higher bitrate/quality)")
+        ax.set_ylabel("VMAF Score")
+        ax.set_title(f"{study_name}: VMAF Score (Mean and P5) by Clip vs CRF")
+        ax.legend(title="Clip", loc="best", fontsize=7, ncol=2)
+        ax.grid(True, alpha=0.3)
+        ax.set_xticks(sorted(df["crf"].unique()))
+
+        output_path = output_dir / f"{study_name}_clip_vs_crf_vmaf_combined.webp"
+        plt.savefig(output_path)
+        print(f"  Saved: {output_path}")
+        plt.close(fig)
+
+    # Plot other metrics
+    for metric, metric_label in clip_metrics:
+        if metric not in df.columns:
+            continue
+
+        # Aggregate by clip and CRF (mean over preset values)
+        clip_data = df.groupby(["source_clip", "crf"])[metric].mean().reset_index()
+
+        fig, ax = plt.subplots(figsize=(10, 7))
+
+        for clip, color, marker in zip(clips, colors, markers, strict=True):
+            subset = clip_data[clip_data["source_clip"] == clip].sort_values("crf")
+            if subset.empty:
+                continue
+            # Shorten clip name for legend
+            clip_short = clip.replace(".mp4", "").replace(".mkv", "")
+            ax.plot(
+                subset["crf"],
+                subset[metric],
+                marker=marker,
+                linewidth=2,
+                markersize=8,
+                label=clip_short,
+                color=color,
+            )
+
+        ax.set_xlabel("CRF (lower = higher bitrate/quality)")
+        ax.set_ylabel(metric_label)
+        ax.set_title(f"{study_name}: {metric_label} by Clip vs CRF")
+        ax.legend(title="Clip", loc="best", fontsize=8)
+        ax.grid(True, alpha=0.3)
+        ax.set_xticks(sorted(df["crf"].unique()))
+
+        output_path = output_dir / f"{study_name}_clip_vs_crf_{metric}.webp"
         plt.savefig(output_path)
         print(f"  Saved: {output_path}")
         plt.close(fig)
@@ -1058,6 +1239,7 @@ Note: All metrics are normalized by frame count and pixel count for fair compari
     if not args.no_clip_plots:
         print("\nGenerating per-clip comparison plots...")
         plot_clip_comparison(df, output_dir, args.study_name)
+        plot_clip_comparison_vs_crf(df, output_dir, args.study_name)
 
     # Clip duration analysis (optional)
     if not args.no_duration_analysis:

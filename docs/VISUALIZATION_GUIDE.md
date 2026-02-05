@@ -40,9 +40,12 @@ For each metric, three complementary visualizations are generated:
 
 ### Per-Clip Analysis
 
-- `<study>_clip_vmaf_mean.webp` - VMAF by clip and preset
-- `<study>_clip_bpp.webp` - Bitrate per pixel by clip and preset
-- `<study>_clip_vmaf_per_bpp.webp` - Quality efficiency by clip
+- `<study>_clip_vmaf_combined.webp` - VMAF (Mean and P5) by clip vs preset
+- `<study>_clip_bytes_per_frame_per_pixel.webp` - Bytes per frame per pixel by clip vs preset
+- `<study>_clip_bytes_per_vmaf_per_frame_per_pixel.webp` - Quality efficiency by clip vs preset
+- `<study>_clip_vs_crf_vmaf_combined.webp` - VMAF (Mean and P5) by clip vs CRF
+- `<study>_clip_vs_crf_bytes_per_frame_per_pixel.webp` - Bytes per frame per pixel by clip vs CRF
+- `<study>_clip_vs_crf_bytes_per_vmaf_per_frame_per_pixel.webp` - Quality efficiency by clip vs CRF
 
 ### Duration Analysis
 
@@ -68,8 +71,12 @@ results/baseline_sweep/
 ├── baseline_sweep_vs_preset_vmaf_combined.webp
 ├── baseline_sweep_vs_crf_vmaf_per_bpp.webp
 ├── baseline_sweep_vs_preset_vmaf_per_bpp.webp
-├── baseline_sweep_clip_vmaf_mean.webp
-├── baseline_sweep_clip_bpp.webp
+├── baseline_sweep_clip_vmaf_combined.webp
+├── baseline_sweep_clip_bytes_per_frame_per_pixel.webp
+├── baseline_sweep_clip_bytes_per_vmaf_per_frame_per_pixel.webp
+├── baseline_sweep_clip_vs_crf_vmaf_combined.webp
+├── baseline_sweep_clip_vs_crf_bytes_per_frame_per_pixel.webp
+├── baseline_sweep_clip_vs_crf_bytes_per_vmaf_per_frame_per_pixel.webp
 ├── baseline_sweep_duration_vmaf_per_bpp_frames.webp
 ├── baseline_sweep_raw_data.csv
 ├── baseline_sweep_aggregated.csv
@@ -114,13 +121,18 @@ Shows how metrics change across presets, with separate lines for each CRF.
 ### Per-Clip Comparison
 Shows how different source clips respond to encoding parameters. Useful for understanding content-dependent behavior.
 
+**Two complementary views:**
+- **vs Preset plots**: Show how clips respond to different presets (averaged over CRF values)
+- **vs CRF plots**: Show how clips respond to different CRF values (averaged over presets)
+
 **Key insights:**
 - Content-dependent encoding behavior
 - Which clips are "harder" to encode efficiently
 - Consistency across different content types
 - Identify outliers or problematic clips
+- Compare behavior across parameter dimensions
 
-**Best for:** Understanding how your parameter choices generalize across content.
+**Best for:** Understanding how your parameter choices generalize across content and identifying which parameter (preset vs CRF) has more content-dependent effects.
 
 ### Duration Analysis
 Shows relationship between clip characteristics (length, resolution) and encoding efficiency.
