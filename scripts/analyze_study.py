@@ -454,11 +454,14 @@ def plot_vs_preset(
     metric_label: str,
     output_dir: Path,
     study_name: str,
+    use_log_scale: bool = False,
 ) -> None:
     """
     Plot metric vs preset, with one line per CRF.
 
     Uses colorful palette with varying markers for accessibility.
+    If use_log_scale is True, y-axis will use logarithmic scale (useful for
+    encoding-time-dependent metrics that show exponential behavior).
     """
     crfs = sorted(df["crf"].unique())
     colors, markers = get_line_colors_and_markers(len(crfs))
@@ -484,6 +487,10 @@ def plot_vs_preset(
     ax.set_title(f"{study_name}: {metric_label} vs Preset")
     ax.legend(title="CRF", loc="best")
     ax.grid(True, alpha=0.3)
+
+    # Use logarithmic scale for encoding-time-dependent metrics
+    if use_log_scale:
+        ax.set_yscale("log")
 
     # Set integer ticks for preset
     ax.set_xticks(sorted(df["preset"].unique()))
@@ -639,6 +646,9 @@ def plot_metric_trio(
       3. Line chart vs Preset
 
     Special case: vmaf_combined generates combined mean+p5 plots.
+
+    Metrics that depend on encoding time use logarithmic y-axis scale when
+    plotted vs preset, since encoding time shows quasi-exponential behavior.
     """
     # Special handling for combined VMAF plot
     if metric == "vmaf_combined":
@@ -660,9 +670,18 @@ def plot_metric_trio(
 
     print(f"\nGenerating plots for: {metric_label}")
 
+    # Determine if metric depends on encoding time (quasi-exponential with preset)
+    # These metrics benefit from logarithmic scale when plotted vs preset
+    encoding_time_metrics = {
+        "encoding_time_per_frame_per_pixel",
+        "bytes_per_vmaf_per_encoding_time",
+        "bytes_per_p5_vmaf_per_encoding_time",
+    }
+    use_log_scale = metric in encoding_time_metrics
+
     plot_heatmap(df, metric, metric_label, output_dir, study_name, higher_is_better)
     plot_vs_crf(df, metric, metric_label, output_dir, study_name)
-    plot_vs_preset(df, metric, metric_label, output_dir, study_name)
+    plot_vs_preset(df, metric, metric_label, output_dir, study_name, use_log_scale)
 
 
 def plot_clip_duration_analysis(
