@@ -17,6 +17,7 @@ import argparse
 import json
 import os
 import platform
+import re
 import subprocess
 import sys
 import time
@@ -28,11 +29,71 @@ from typing import Any
 from utils import calculate_sha256
 
 
+def get_cpu_model() -> str:
+    """Get CPU model name from /proc/cpuinfo (Linux) or platform (fallback)."""
+    # Try /proc/cpuinfo first (works in containers)
+    try:
+        with open("/proc/cpuinfo") as f:
+            for line in f:
+                if line.startswith("model name"):
+                    # Format: "model name      : AMD Ryzen 5 PRO 4650U..."
+                    cpu_name: str = line.split(":", 1)[1].strip()
+                    return cpu_name
+    except (FileNotFoundError, IndexError):
+        pass
+
+    # Fallback to platform.processor()
+    cpu: str = platform.processor()
+    if cpu:
+        return cpu
+
+    return "unknown"
+
+
+def get_libsvtav1_version() -> str:
+    """Extract libsvtav1 version from FFmpeg encoder output.
+
+    FFmpeg doesn't expose library versions directly, but we can note the
+    FFmpeg build date/version which includes the linked libsvtav1.
+    """
+    try:
+        # Get FFmpeg's libavcodec version which links to libsvtav1
+        result = subprocess.run(["ffmpeg", "-version"], capture_output=True, text=True, timeout=5)
+        output = result.stdout
+
+        # Try to get FFmpeg build date from extra-version (e.g., "N-122602-g7ebb6c54eb-20260130")
+        first_line = output.split("\n")[0] if output else ""
+        if "-20" in first_line:  # Date pattern YYYYMMDD
+            match = re.search(r"-(\d{8})", first_line)
+            if match:
+                build_date = match.group(1)
+                # Also get libavcodec version
+                for line in output.split("\n"):
+                    if "libavcodec" in line:
+                        parts = line.split()
+                        if len(parts) >= 2:
+                            # Get version like "62. 23.103"
+                            version = parts[1]
+                            return f"FFmpeg build {build_date}, libavcodec {version}"
+                return f"FFmpeg build {build_date}"
+
+        # Fallback: just extract libavcodec version
+        for line in output.split("\n"):
+            if "libavcodec" in line:
+                parts = line.split()
+                if len(parts) >= 2:
+                    return f"libavcodec {parts[1]}"
+
+        return "unknown (bundled with FFmpeg)"
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return "not found"
+
+
 def get_system_info() -> dict[str, Any]:
     """Gather system information for reproducibility."""
     info: dict[str, Any] = {
         "os": platform.platform(),
-        "cpu": platform.processor() or "unknown",
+        "cpu_model": get_cpu_model(),
         "cpu_cores": os.cpu_count(),
     }
 
@@ -48,28 +109,16 @@ def get_system_info() -> dict[str, Any]:
     except (FileNotFoundError, ValueError):
         info["memory_gb"] = None
 
-    # Get SVT-AV1 version
-    try:
-        result = subprocess.run(
-            ["SvtAv1EncApp", "--version"], capture_output=True, text=True, timeout=5
-        )
-        # Parse version from output
-        for line in result.stdout.split("\n"):
-            if "SVT" in line or "version" in line.lower():
-                info["svt_av1_version"] = line.strip()
-                break
-        else:
-            info["svt_av1_version"] = "unknown"
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        info["svt_av1_version"] = "not found"
-
-    # Get FFmpeg version
+    # Get FFmpeg version (primary tool we use)
     try:
         result = subprocess.run(["ffmpeg", "-version"], capture_output=True, text=True, timeout=5)
         first_line = result.stdout.split("\n")[0]
         info["ffmpeg_version"] = first_line.strip()
     except (subprocess.TimeoutExpired, FileNotFoundError):
         info["ffmpeg_version"] = "not found"
+
+    # Get libsvtav1 version (via FFmpeg)
+    info["libsvtav1_version"] = get_libsvtav1_version()
 
     return info
 
@@ -301,7 +350,6 @@ def encode_clip(
         "source_clip": clip_path.name,
         "parameters": params.copy(),
         "success": False,
-        "error": None,
     }
 
     # Run encoding and measure time
@@ -323,20 +371,13 @@ def encode_clip(
                 print(f"  STDERR: {proc.stderr}")
             return result
 
-        # Parse encoding stats from FFmpeg output
-        result["fps"] = parse_fps_from_output(proc.stderr)
-
         # Get output file info
         result["file_size_bytes"] = output_path.stat().st_size
         result["sha256"] = calculate_sha256(output_path)
 
-        # Duration will be calculated during analysis phase
-        result["duration_seconds"] = None
-        # Bitrate will be calculated during analysis phase
-        result["bitrate_kbps"] = None
-
         result["timestamp"] = datetime.now(UTC).isoformat().replace("+00:00", "Z")
         result["success"] = True
+        # Don't include error field when success=True
 
     except subprocess.TimeoutExpired:
         result["error"] = "Encoding timeout (>1 hour)"
@@ -345,26 +386,7 @@ def encode_clip(
         result["error"] = str(e)
         result["encoding_time_seconds"] = round(time.time() - start_time, 2)
 
-    # Set null for unavailable metrics
-    result["cpu_time_seconds"] = None
-    result["peak_memory_mb"] = None
-
     return result
-
-
-def parse_fps_from_output(stderr: str) -> float | None:
-    """Parse encoding FPS from FFmpeg stderr output."""
-    # Look for line like: "frame= 1234 fps=45.6 ..."
-    for line in stderr.split("\n"):
-        if "fps=" in line:
-            try:
-                parts = line.split("fps=")
-                if len(parts) > 1:
-                    fps_str = parts[1].split()[0]
-                    return float(fps_str)
-            except (ValueError, IndexError):
-                continue
-    return None
 
 
 def load_study_config(config_path: Path) -> dict[str, Any]:
@@ -481,10 +503,10 @@ def main():
     print("\nGathering system information...")
     system_info = get_system_info()
     if args.verbose:
-        print(f"  CPU: {system_info['cpu']}")
+        print(f"  CPU: {system_info['cpu_model']}")
         print(f"  Cores: {system_info['cpu_cores']}")
         print(f"  Memory: {system_info['memory_gb']} GB")
-        print(f"  SVT-AV1: {system_info['svt_av1_version']}")
+        print(f"  SVT-AV1: {system_info['libsvtav1_version']}")
         print(f"  FFmpeg: {system_info['ffmpeg_version']}")
 
     # Initialize metadata
@@ -493,7 +515,7 @@ def main():
         "system_info": system_info,
         "start_time": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         "end_time": None,
-        "encodings": [],
+        "encodings": {},
     }
 
     # Calculate work units for progress tracking
@@ -561,7 +583,9 @@ def main():
             )
 
             result = encode_clip(clip, output_path, params, verbose=args.verbose)
-            metadata["encodings"].append(result)
+            # Store in dict with output_file as key
+            output_file = result.pop("output_file")
+            metadata["encodings"][output_file] = result
 
             if result["success"]:
                 print(
@@ -586,13 +610,14 @@ def main():
 
     # Finalize metadata
     metadata["end_time"] = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    encodings_list = list(metadata["encodings"].values())
     metadata["summary"] = {
         "total_encodings": total_encodings,
         "successful_encodings": completed,
         "failed_encodings": failed,
-        "total_time_seconds": sum(e["encoding_time_seconds"] for e in metadata["encodings"]),
+        "total_time_seconds": sum(e["encoding_time_seconds"] for e in encodings_list),
         "total_output_size_bytes": sum(
-            e.get("file_size_bytes", 0) for e in metadata["encodings"] if e["success"]
+            e.get("file_size_bytes", 0) for e in encodings_list if e["success"]
         ),
     }
 

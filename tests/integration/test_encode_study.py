@@ -291,16 +291,20 @@ class TestSystemInfo:
 
         # Check required fields
         assert "os" in info
-        assert "cpu" in info
+        assert "cpu_model" in info
         assert "cpu_cores" in info
+        assert "ffmpeg_version" in info
+        assert "libsvtav1_version" in info
 
     def test_system_info_types(self):
         """Test that system info values have correct types."""
         info = encode_study.get_system_info()
 
         assert isinstance(info["os"], str)
-        assert isinstance(info["cpu"], str)
+        assert isinstance(info["cpu_model"], str)
         assert info["cpu_cores"] is None or isinstance(info["cpu_cores"], int)
+        assert isinstance(info["ffmpeg_version"], str)
+        assert isinstance(info["libsvtav1_version"], str)
 
 
 class TestFindClips:

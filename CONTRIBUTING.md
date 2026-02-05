@@ -442,7 +442,7 @@ just --list
 - **[README.md](README.md)** - Project overview and quick start
 - **[ARCHITECTURE.md](ARCHITECTURE.md)** - Design decisions and data flow
 - **[OVERVIEW.md](OVERVIEW.md)** - Research methodology and goals
-- **[docs/ANALYSIS_GUIDE.md](docs/ANALYSIS_GUIDE.md)** - Quality metrics and analysis system
+- **[docs/MEASUREMENT_GUIDE.md](docs/MEASUREMENT_GUIDE.md)** - Quality metrics and measurement system
 - **[docs/VMAF_NOTES.md](docs/VMAF_NOTES.md)** - Why we use VMAF NEG mode
 - **[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)** - Common issues and solutions
 

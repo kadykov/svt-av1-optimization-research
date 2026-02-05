@@ -31,24 +31,24 @@ ls -lh data/encoded/baseline_sweep/
 cat data/encoded/baseline_sweep/encoding_metadata.json | head -30
 ```
 
-### 3. Calculate Quality Metrics
+### 3. Measure Quality Metrics
 
 ```bash
-# Analyze with VMAF, PSNR, and SSIM
-just analyze-study baseline_sweep
+# Measure with VMAF, PSNR, and SSIM
+just measure-study baseline_sweep
 
 # Or faster: only VMAF
-just analyze-vmaf baseline_sweep
+just measure-vmaf baseline_sweep
 
-# Check analysis results
-head -50 data/encoded/baseline_sweep/analysis_metadata.json
+# Check measurement results
+head -50 data/encoded/baseline_sweep/measurements.json
 ```
 
-### 4. Generate Visualizations
+### 4. Analyze and Generate Visualizations
 
 ```bash
 # Generate all plots, CSV, and report
-just visualize-study baseline_sweep
+just analyze-study baseline_sweep
 
 # View results
 ls -lh results/baseline_sweep/

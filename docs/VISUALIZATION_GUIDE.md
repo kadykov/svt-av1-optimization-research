@@ -5,8 +5,8 @@ This guide explains how to analyze and visualize encoding study results.
 ## Quick Start
 
 ```bash
-# After running a study and analysis:
-just visualize-study baseline_sweep
+# After running a study and measuring quality:
+just analyze-study baseline_sweep
 ```
 
 This generates:
@@ -151,22 +151,22 @@ Shows relationship between clip characteristics (length, resolution) and encodin
 
 ```bash
 # Generate all plots and exports
-just visualize-study baseline_sweep
+just analyze-study baseline_sweep
 
 # Custom output directory
-python scripts/visualize_study.py baseline_sweep --output custom_analysis/
+python scripts/analyze_study.py baseline_sweep --output custom_analysis/
 
 # Generate specific metrics only
-python scripts/visualize_study.py baseline_sweep --metrics vmaf_combined bpp
+python scripts/analyze_study.py baseline_sweep --metrics vmaf_combined bpp
 
 # Skip per-clip comparison plots
-python scripts/visualize_study.py baseline_sweep --no-clip-plots
+python scripts/analyze_study.py baseline_sweep --no-clip-plots
 
 # Skip duration analysis
-python scripts/visualize_study.py baseline_sweep --no-duration-analysis
+python scripts/analyze_study.py baseline_sweep --no-duration-analysis
 
 # Skip CSV export
-python scripts/visualize_study.py baseline_sweep --no-csv
+python scripts/analyze_study.py baseline_sweep --no-csv
 
 # Skip text report
 python scripts/visualize_study.py baseline_sweep --no-report
@@ -302,15 +302,15 @@ just extract-clips 10 15 30
 # Run encoding study
 just encode-study baseline_sweep
 
-# Calculate quality metrics
-just analyze-study baseline_sweep
+# Measure quality metrics
+just measure-study baseline_sweep
 ```
 
-### 2. Generate Visualizations
+### 2. Analyze and Generate Visualizations
 
 ```bash
 # Generate all plots
-just visualize-study baseline_sweep
+just analyze-study baseline_sweep
 
 # View results
 ls -lh results/baseline_sweep/
@@ -373,13 +373,13 @@ The visualization system works with any study configuration:
 ```bash
 # Film grain study
 just encode-study film_grain
+just measure-study film_grain
 just analyze-study film_grain
-just visualize-study film_grain
 
 # Screen content study
 just encode-study screen_content
+just measure-study screen_content
 just analyze-study screen_content
-just visualize-study screen_content
 ```
 
 Each study generates its own visualizations in `results/<study_name>/`.

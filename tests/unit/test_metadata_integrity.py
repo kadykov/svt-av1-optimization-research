@@ -212,7 +212,16 @@ class TestEncodingMetadataIntegrity:
             metadata = json.load(f)
 
         errors = []
-        for encoding in metadata.get("encodings", []):
+        # Handle both old array format and new dict format
+        encodings_data = metadata.get("encodings", {})
+        if isinstance(encodings_data, dict):
+            # New dict format: {output_file: {encoding_data}}
+            encodings = [{"output_file": k, **v} for k, v in encodings_data.items()]
+        else:
+            # Old array format: [{output_file: ..., ...}]
+            encodings = encodings_data
+
+        for encoding in encodings:
             output_file = encoding.get("output_file")
             stored_size = encoding.get("file_size_bytes")
             file_path = encoding_dir / output_file
@@ -247,7 +256,16 @@ class TestEncodingMetadataIntegrity:
         errors = []
         checked_clips = set()
 
-        for encoding in metadata.get("encodings", []):
+        # Handle both old array format and new dict format
+        encodings_data = metadata.get("encodings", {})
+        if isinstance(encodings_data, dict):
+            # New dict format: {output_file: {encoding_data}}
+            encodings = [{"output_file": k, **v} for k, v in encodings_data.items()]
+        else:
+            # Old array format: [{output_file: ..., ...}]
+            encodings = encodings_data
+
+        for encoding in encodings:
             source_clip_name = encoding.get("source_clip")
 
             if source_clip_name in checked_clips:

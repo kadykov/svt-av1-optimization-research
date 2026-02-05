@@ -1,0 +1,219 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Quality Measurements Metadata",
+  "description": "Machine-generated metadata tracking quality measurements (VMAF, PSNR, SSIM) for encoded videos.",
+  "type": "object",
+  "required": ["study_name", "encoding_metadata_file", "start_time", "measurements"],
+  "properties": {
+    "study_name": {
+      "type": "string",
+      "description": "Name of the study being measured"
+    },
+    "encoding_metadata_file": {
+      "type": "string",
+      "description": "Path to the encoding metadata file used"
+    },
+    "start_time": {
+      "type": "string",
+      "description": "ISO 8601 timestamp when measurement started",
+      "format": "date-time"
+    },
+    "end_time": {
+      "type": ["string", "null"],
+      "description": "ISO 8601 timestamp when measurement completed (null if in progress)",
+      "format": "date-time"
+    },
+    "measurements": {
+      "type": "object",
+      "description": "Dictionary of measurements keyed by encoded filename",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["vmaf", "video_info", "duration_match", "measurement_time_seconds", "success"],
+        "properties": {
+          "vmaf": {
+            "type": "object",
+            "description": "VMAF quality metrics",
+            "properties": {
+              "mean": {
+                "type": ["number", "null"],
+                "description": "Mean VMAF score",
+                "minimum": 0,
+                "maximum": 100
+              },
+              "min": {
+                "type": ["number", "null"],
+                "description": "Minimum VMAF score",
+                "minimum": 0,
+                "maximum": 100
+              },
+              "max": {
+                "type": ["number", "null"],
+                "description": "Maximum VMAF score",
+                "minimum": 0,
+                "maximum": 100
+              },
+              "harmonic_mean": {
+                "type": ["number", "null"],
+                "description": "Harmonic mean VMAF score",
+                "minimum": 0,
+                "maximum": 100
+              },
+              "percentile_5": {
+                "type": ["number", "null"],
+                "description": "5th percentile VMAF score",
+                "minimum": 0,
+                "maximum": 100
+              },
+              "percentile_10": {
+                "type": ["number", "null"],
+                "description": "10th percentile VMAF score",
+                "minimum": 0,
+                "maximum": 100
+              },
+              "percentile_25": {
+                "type": ["number", "null"],
+                "description": "25th percentile VMAF score",
+                "minimum": 0,
+                "maximum": 100
+              }
+            }
+          },
+          "psnr": {
+            "type": "object",
+            "description": "PSNR quality metrics",
+            "properties": {
+              "y": {
+                "type": ["number", "null"],
+                "description": "PSNR for Y (luma) channel in dB"
+              },
+              "u": {
+                "type": ["number", "null"],
+                "description": "PSNR for U (chroma) channel in dB"
+              },
+              "v": {
+                "type": ["number", "null"],
+                "description": "PSNR for V (chroma) channel in dB"
+              }
+            }
+          },
+          "ssim": {
+            "type": "object",
+            "description": "SSIM quality metrics",
+            "properties": {
+              "y": {
+                "type": ["number", "null"],
+                "description": "SSIM for Y (luma) channel",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "u": {
+                "type": ["number", "null"],
+                "description": "SSIM for U (chroma) channel",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "v": {
+                "type": ["number", "null"],
+                "description": "SSIM for V (chroma) channel",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "all": {
+                "type": ["number", "null"],
+                "description": "Overall SSIM score",
+                "minimum": 0,
+                "maximum": 1
+              }
+            }
+          },
+          "video_info": {
+            "type": "object",
+            "description": "Video file information",
+            "properties": {
+              "duration_seconds": {
+                "type": ["number", "null"],
+                "description": "Duration of video in seconds"
+              },
+              "width": {
+                "type": ["integer", "null"],
+                "description": "Video width in pixels"
+              },
+              "height": {
+                "type": ["integer", "null"],
+                "description": "Video height in pixels"
+              },
+              "frame_count": {
+                "type": ["integer", "null"],
+                "description": "Number of frames in video"
+              },
+              "frame_rate": {
+                "type": ["number", "null"],
+                "description": "Frame rate in fps"
+              },
+              "bitrate_kbps": {
+                "type": ["number", "null"],
+                "description": "Video bitrate in kbps"
+              }
+            }
+          },
+          "duration_match": {
+            "type": "boolean",
+            "description": "Whether encoded and source durations match"
+          },
+          "measurement_time_seconds": {
+            "type": "number",
+            "description": "Time taken to measure quality metrics (seconds)",
+            "minimum": 0
+          },
+          "timestamp": {
+            "type": "string",
+            "description": "ISO 8601 timestamp when this measurement completed",
+            "format": "date-time"
+          },
+          "success": {
+            "type": "boolean",
+            "description": "Whether measurement completed successfully"
+          },
+          "error": {
+            "type": "string",
+            "description": "Error message if measurement failed (only present when success=false)"
+          }
+        }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "description": "Summary statistics for all measurements",
+      "properties": {
+        "total_measurements": {
+          "type": "integer",
+          "description": "Total number of measurements attempted"
+        },
+        "successful_measurements": {
+          "type": "integer",
+          "description": "Number of successful measurements"
+        },
+        "failed_measurements": {
+          "type": "integer",
+          "description": "Number of failed measurements"
+        },
+        "vmaf_range": {
+          "type": "object",
+          "description": "Range of VMAF scores across all encodings",
+          "properties": {
+            "min": {
+              "type": ["number", "null"]
+            },
+            "max": {
+              "type": ["number", "null"]
+            },
+            "mean": {
+              "type": ["number", "null"]
+            }
+          }
+        }
+      }
+    }
+  },
+  "additionalProperties": false
+}

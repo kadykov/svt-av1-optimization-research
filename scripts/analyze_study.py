@@ -1,950 +1,1343 @@
 #!/usr/bin/env python3
 """
-Analyze encoded videos from a study by calculating quality metrics.
+Analyze encoding study results and generate visualizations.
 
-This script calculates VMAF (NEG mode), PSNR, and SSIM for all encodings
-in a study by comparing them against the original source clips. Results
-are stored in analysis_metadata.json alongside the encoding metadata.
+This is the final phase of the workflow:
+  1. encode_study.py - Encode clips with various parameters
+  2. measure_study.py - Calculate quality metrics (VMAF, PSNR, SSIM)
+  3. analyze_study.py - Analyze results and generate visualizations [THIS SCRIPT]
 
-Quality Metrics:
-- VMAF NEG: Netflix's perceptual quality metric (No Enhancement Gain mode)
-  * NEG mode disables enhancement gain, making it ideal for codec evaluation
-  * Industry standard for measuring compression quality
-- PSNR: Peak Signal-to-Noise Ratio (traditional pixel difference metric)
-- SSIM: Structural Similarity Index (perceptual similarity metric)
+Reads measurements.json from a study and generates:
+  - WebP plots: Heatmaps and line charts for each metric
+  - CSV exports: Raw and aggregated data
+  - Text report: Summary statistics and best configurations
 
-Usage:
-    python analyze_study.py baseline_sweep
-    python analyze_study.py baseline_sweep --metrics vmaf
-    python analyze_study.py film_grain --continue-on-error
-    python analyze_study.py baseline_sweep --threads 8 -v
+Each metric gets three visualizations:
+  1. Heatmap: CRF vs Preset
+  2. Line chart: Metric vs CRF (one line per preset)
+  3. Line chart: Metric vs Preset (one line per CRF)
+
+All metrics are normalized per-frame-per-pixel for fair comparison across:
+  - Different resolutions (e.g., 1080p vs 4K)
+  - Different durations (e.g., 5s vs 30s clips)
+  - Different frame rates (e.g., 24fps vs 60fps)
+
+Key metrics (calculated in this script, not stored in JSON):
+  - bytes_per_frame_per_pixel: File size efficiency
+  - encoding_time_per_frame_per_pixel: Computational cost
+  - bytes_per_vmaf_per_frame_per_pixel: Inverted efficiency (lower = better)
+    "How many bytes per pixel do I need to achieve this VMAF score?"
+  - bytes_per_vmaf_per_encoding_time: Combined efficiency (after cancellation)
+
+Design principles:
+  - One figure per file (no subfigures)
+  - Colorblind-friendly palettes (viridis)
+  - Aggregate statistics across clips first
+  - Focus on actionable metrics
 """
 
 import argparse
-import contextlib
 import json
-import os
-import subprocess
 import sys
-import tempfile
-import time
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from utils import get_video_bitrate
+
+try:
+    import matplotlib.pyplot as plt
+    import numpy as np
+    import pandas as pd
+    import seaborn as sns
+except ImportError:
+    print(
+        "Error: Required packages not installed. Install with:",
+        file=sys.stderr,
+    )
+    print("  pip install pandas numpy matplotlib seaborn", file=sys.stderr)
+    print("Or use: just install-dev", file=sys.stderr)
+    sys.exit(1)
 
 
-def load_encoding_metadata(study_dir: Path) -> dict[str, Any]:
-    """Load encoding metadata for a study."""
-    metadata_file = study_dir / "encoding_metadata.json"
-    if not metadata_file.exists():
-        raise FileNotFoundError(
-            f"Encoding metadata not found: {metadata_file}\n"
-            f"Run encoding study first: just encode-study {study_dir.name}"
-        )
+# Colorblind-friendly palette: viridis (dark purple/blue to yellow)
+COLORMAP = "viridis"
+# For line plots, use colorful discrete palette with distinct colors
+# Markers will provide additional distinction for colorblind accessibility
+LINE_PALETTE = "tab10"  # Standard colorful palette
+# Marker shapes to cycle through for line plots
+LINE_MARKERS = ["o", "s", "^", "D", "v", "<", ">", "p", "*", "h"]
 
-    with open(metadata_file) as f:
-        data: dict[str, Any] = json.load(f)
-        return data
+# Configure matplotlib defaults
+plt.rcParams["figure.figsize"] = (10, 7)
+plt.rcParams["font.size"] = 11
+plt.rcParams["axes.titlesize"] = 14
+plt.rcParams["axes.labelsize"] = 12
+plt.rcParams["legend.fontsize"] = 10
+plt.rcParams["figure.dpi"] = 100
+plt.rcParams["savefig.dpi"] = 300
+plt.rcParams["savefig.bbox"] = "tight"
+
+# Use a clean style
+sns.set_theme(style="whitegrid")
 
 
-def count_video_frames(video_path: Path) -> int | None:
-    """Count actual frames in a video by decoding (more reliable than nb_frames metadata).
+# Metrics to analyze with their display names and higher_is_better flag
+# Special metric: "vmaf_combined" generates plots with both mean and p5
+# All metrics are normalized per-frame-per-pixel for fair comparison across different
+# resolutions, durations, and frame rates
+METRICS = [
+    ("vmaf_combined", "VMAF Score (Mean and P5)", True),  # Combined plot
+    ("bytes_per_frame_per_pixel", "Bytes per Frame per Pixel", False),
+    ("bytes_per_vmaf_per_frame_per_pixel", "Bytes per VMAF Point per Frame per Pixel", False),
+    ("bytes_per_p5_vmaf_per_frame_per_pixel", "Bytes per P5-VMAF Point per Frame per Pixel", False),
+    ("encoding_time_per_frame_per_pixel", "Encoding Time per Frame per Megapixel (ms)", False),
+    ("bytes_per_vmaf_per_encoding_time", "Bytes per VMAF Point per Encoding Second", False),
+    ("bytes_per_p5_vmaf_per_encoding_time", "Bytes per P5-VMAF Point per Encoding Second", False),
+]
 
-    This is slower than reading nb_frames metadata but more accurate, especially
-    for clips extracted with stream copy that may have incorrect metadata.
-    """
+
+def load_json(file_path: Path) -> dict[str, Any]:
+    """Load JSON file with error handling."""
     try:
-        cmd = [
-            "ffprobe",
-            "-v",
-            "error",
-            "-select_streams",
-            "v:0",
-            "-count_frames",
-            "-show_entries",
-            "stream=nb_read_frames",
-            "-of",
-            "csv=p=0",
-            str(video_path),
-        ]
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=300)
-        return int(result.stdout.strip())
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, ValueError):
-        return None
-
-
-def find_source_clip(clip_name: str, clips_dir: Path) -> Path | None:
-    """Find the source clip file in the clips directory."""
-    # Try exact match first
-    clip_path = clips_dir / clip_name
-    if clip_path.exists():
-        return clip_path
-
-    # Try with common extensions
-    for ext in [".mp4", ".mkv", ".mov", ".avi", ".webm"]:
-        clip_path = clips_dir / f"{Path(clip_name).stem}{ext}"
-        if clip_path.exists():
-            return clip_path
-
-    return None
-
-
-def get_video_info(video_path: Path) -> dict[str, Any] | None:
-    """Get video information (duration, frame count, resolution) using FFprobe."""
-    try:
-        cmd = [
-            "ffprobe",
-            "-v",
-            "error",
-            "-select_streams",
-            "v:0",
-            "-show_entries",
-            "stream=width,height,nb_frames,r_frame_rate:format=duration",
-            "-of",
-            "json",
-            str(video_path),
-        ]
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-        data = json.loads(result.stdout)
-
-        stream = data.get("streams", [{}])[0]
-        format_info = data.get("format", {})
-
-        # Parse frame rate (e.g., "30/1" -> 30.0)
-        frame_rate_str = stream.get("r_frame_rate", "0/1")
-        num, denom = map(int, frame_rate_str.split("/"))
-        frame_rate = num / denom if denom > 0 else 0
-
-        # Get frame count (may not be available for all formats)
-        nb_frames = stream.get("nb_frames")
-        if nb_frames:
-            frame_count = int(nb_frames)
-        else:
-            # Estimate from duration and frame rate
-            duration = float(format_info.get("duration", 0))
-            frame_count = int(duration * frame_rate) if duration > 0 else 0
-
-        return {
-            "width": int(stream.get("width", 0)),
-            "height": int(stream.get("height", 0)),
-            "frame_count": frame_count,
-            "frame_rate": frame_rate,
-            "duration": float(format_info.get("duration", 0)),
-        }
-    except (subprocess.CalledProcessError, ValueError, KeyError, json.JSONDecodeError):
-        return None
-
-
-def get_video_duration(video_path: Path) -> float | None:
-    """Get video duration in seconds using FFprobe (simplified version)."""
-    info = get_video_info(video_path)
-    return info["duration"] if info else None
-
-
-def calculate_work_units(video_info: dict[str, Any]) -> int:
-    """Calculate work units for a video based on frame count and resolution.
-
-    Work units = frame_count * width * height
-    This gives a rough measure of encoding/analysis complexity.
-    """
-    if not video_info:
-        return 0
-
-    frame_count = video_info.get("frame_count", 0)
-    width = video_info.get("width", 0)
-    height = video_info.get("height", 0)
-
-    return int(frame_count * width * height)
-
-
-def format_time_remaining(seconds: float) -> str:
-    """Format seconds into human-readable time (e.g., '2h 15m', '45s')."""
-    if seconds < 60:
-        return f"{int(seconds)}s"
-    if seconds < 3600:
-        minutes = int(seconds / 60)
-        secs = int(seconds % 60)
-        return f"{minutes}m {secs}s"
-    hours = int(seconds / 3600)
-    minutes = int((seconds % 3600) / 60)
-    return f"{hours}h {minutes}m"
-
-
-def calculate_vmaf(
-    reference: Path,
-    distorted: Path,
-    model: str = "version=vmaf_v0.6.1neg",
-    threads: int = 4,
-    verbose: bool = False,
-) -> dict[str, float] | None:
-    """
-    Calculate VMAF score using FFmpeg libvmaf filter.
-
-    Args:
-        reference: Path to original/reference video
-        distorted: Path to encoded/distorted video
-        model: VMAF model to use (default: version=vmaf_v0.6.1neg for NEG mode)
-        threads: Number of threads for VMAF calculation
-        verbose: Show FFmpeg output
-
-    Returns:
-        Dictionary with VMAF statistics or None on error
-    """
-    # Create temporary file for VMAF JSON output
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as tmp:
-        log_file = Path(tmp.name)
-
-    try:
-        # Build FFmpeg command for VMAF calculation
-        # Format: ffmpeg -i distorted -i reference -lavfi libvmaf -f null -
-        # NOTE: We use setpts=PTS-STARTPTS to reset timestamps to 0 for both streams.
-        # This is critical because:
-        # 1. Source clips extracted with -c copy may have non-zero start times
-        # 2. Encoded files may have different start times than sources
-        # 3. Without alignment, libvmaf compares wrong frames, giving incorrect scores
-        filter_complex = (
-            f"[0:v]setpts=PTS-STARTPTS[dist];"
-            f"[1:v]setpts=PTS-STARTPTS[ref];"
-            f"[dist][ref]libvmaf=model={model}:log_path={log_file}:log_fmt=json:n_threads={threads}"
-        )
-        cmd = [
-            "ffmpeg",
-            "-i",
-            str(distorted),
-            "-i",
-            str(reference),
-            "-lavfi",
-            filter_complex,
-            "-f",
-            "null",
-            "-",
-        ]
-
-        if verbose:
-            print(f"  Running: {' '.join(cmd)}")
-
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=3600,  # 1 hour max
-        )
-
-        if result.returncode != 0:
-            print("  ERROR: VMAF calculation failed")
-            if verbose:
-                print(f"  stderr: {result.stderr}")
-            return None
-
-        # Parse VMAF JSON output
-        with open(log_file) as f:
-            vmaf_data = json.load(f)
-
-        # Extract frame scores
-        frames = vmaf_data.get("frames", [])
-        if not frames:
-            print("  ERROR: No VMAF frames found in output")
-            return None
-
-        scores = [frame["metrics"]["vmaf"] for frame in frames]
-
-        # Calculate statistics
-        scores_sorted = sorted(scores)
-        n = len(scores)
-
-        mean = sum(scores) / n
-
-        stats = {
-            "mean": mean,
-            "harmonic_mean": n / sum(1 / s if s > 0 else 0 for s in scores),
-            "min": min(scores),
-            "max": max(scores),
-            "percentile_1": scores_sorted[int(n * 0.01)],
-            "percentile_5": scores_sorted[int(n * 0.05)],
-            "percentile_25": scores_sorted[int(n * 0.25)],
-            "percentile_50": scores_sorted[int(n * 0.50)],
-            "percentile_75": scores_sorted[int(n * 0.75)],
-            "percentile_95": scores_sorted[int(n * 0.95)],
-            "std_dev": (sum((s - mean) ** 2 for s in scores) / n) ** 0.5,
-        }
-
-        # Round to 2 decimal places
-        stats = {k: round(v, 2) for k, v in stats.items()}
-
-        return stats
-
-    except subprocess.TimeoutExpired:
-        print("  ERROR: VMAF calculation timed out")
-        return None
-    except Exception as e:
-        print(f"  ERROR: VMAF calculation failed: {e}")
-        return None
-    finally:
-        # Clean up temporary file
-        if log_file.exists():
-            log_file.unlink()
-
-
-def calculate_psnr_ssim(
-    reference: Path,
-    distorted: Path,
-    calculate_psnr: bool = True,
-    calculate_ssim: bool = True,
-    verbose: bool = False,
-) -> tuple[dict | None, dict | None]:
-    """
-    Calculate PSNR and/or SSIM using FFmpeg filters.
-
-    Returns:
-        Tuple of (psnr_stats, ssim_stats), each can be None if not calculated
-    """
-    if not calculate_psnr and not calculate_ssim:
-        return None, None
-
-    # Build filter chain with timestamp alignment
-    # NOTE: We use setpts=PTS-STARTPTS to reset timestamps to 0 for both streams.
-    # This ensures proper frame-to-frame comparison even when source clips have
-    # non-zero start times (common with -c copy extraction).
-    #
-    # When calculating both PSNR and SSIM, we must use split filters to provide
-    # separate copies of each stream to each metric filter, since each filter
-    # consumes its input streams.
-    if calculate_psnr and calculate_ssim:
-        # Need to split both streams for both metrics
-        filter_chain = (
-            "[0:v]setpts=PTS-STARTPTS,split=2[dist1][dist2];"
-            "[1:v]setpts=PTS-STARTPTS,split=2[ref1][ref2];"
-            "[dist1][ref1]psnr=stats_file=-;"
-            "[dist2][ref2]ssim=stats_file=-"
-        )
-    elif calculate_psnr:
-        filter_chain = (
-            "[0:v]setpts=PTS-STARTPTS[dist];"
-            "[1:v]setpts=PTS-STARTPTS[ref];"
-            "[dist][ref]psnr=stats_file=-"
-        )
-    else:  # calculate_ssim only
-        filter_chain = (
-            "[0:v]setpts=PTS-STARTPTS[dist];"
-            "[1:v]setpts=PTS-STARTPTS[ref];"
-            "[dist][ref]ssim=stats_file=-"
-        )
-
-    try:
-        cmd = [
-            "ffmpeg",
-            "-i",
-            str(distorted),
-            "-i",
-            str(reference),
-            "-lavfi",
-            filter_chain,
-            "-f",
-            "null",
-            "-",
-        ]
-
-        if verbose:
-            print(f"  Running: {' '.join(cmd)}")
-
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
-
-        if result.returncode != 0:
-            print("  ERROR: PSNR/SSIM calculation failed")
-            if verbose:
-                print(f"  stderr: {result.stderr}")
-            return None, None
-
-        # Parse PSNR and SSIM from stderr
-        psnr_stats = None
-        ssim_stats = None
-
-        for line in result.stderr.split("\n"):
-            if calculate_psnr and "PSNR" in line and "average:" in line:
-                # Example: [Parsed_psnr_0 @ 0x...] PSNR y:42.3 u:45.1 v:44.8 average:42.9 min:38.5 max:48.2
-                try:
-                    parts = line.split("PSNR")[1].strip()
-                    values = {}
-                    for part in parts.split():
-                        if ":" in part:
-                            k, v = part.split(":")
-                            values[k] = float(v)
-
-                    psnr_stats = {
-                        "y_mean": round(values.get("y", 0), 2),
-                        "u_mean": round(values.get("u", 0), 2),
-                        "v_mean": round(values.get("v", 0), 2),
-                        "avg_mean": round(values.get("average", 0), 2),
-                    }
-                except (ValueError, KeyError) as e:
-                    if verbose:
-                        print(f"  Warning: Failed to parse PSNR: {e}")
-
-            if calculate_ssim and "SSIM" in line and "All:" in line and "[Parsed_ssim" in line:
-                # Example: [Parsed_ssim_0 @ 0x...] SSIM Y:0.982 U:0.991 V:0.990 All:0.985 (18.234)
-                # NOTE: We must check for "[Parsed_ssim" to avoid matching per-frame output lines
-                # which also contain "All:" but have format like "n:450 Y:0.967 ... All:0.968"
-                try:
-                    parts = line.split("SSIM")[1].strip()
-                    values = {}
-                    for part in parts.split():
-                        if ":" in part:
-                            k, v = part.split(":")
-                            # Remove parentheses if present
-                            v = v.strip("()")
-                            with contextlib.suppress(ValueError):
-                                values[k] = float(v)
-
-                    ssim_stats = {
-                        "y_mean": round(values.get("Y", 0), 4),
-                        "u_mean": round(values.get("U", 0), 4),
-                        "v_mean": round(values.get("V", 0), 4),
-                        "avg_mean": round(values.get("All", 0), 4),
-                    }
-                except (ValueError, KeyError) as e:
-                    if verbose:
-                        print(f"  Warning: Failed to parse SSIM: {e}")
-
-        return psnr_stats, ssim_stats
-
-    except subprocess.TimeoutExpired:
-        print("  ERROR: PSNR/SSIM calculation timed out")
-        return None, None
-    except Exception as e:
-        print(f"  ERROR: PSNR/SSIM calculation failed: {e}")
-        return None, None
-
-
-def calculate_efficiency_metrics(
-    vmaf_mean: float | None,
-    file_size_bytes: int,
-    bitrate_kbps: float | None,
-    encoding_time: float | None,
-) -> dict[str, float]:
-    """Calculate derived efficiency metrics."""
-    metrics = {}
-
-    if vmaf_mean is not None:
-        # VMAF per megabyte
-        size_mb = file_size_bytes / (1024 * 1024)
-        if size_mb > 0:
-            metrics["vmaf_per_mbyte"] = round(vmaf_mean / size_mb, 2)
-
-        # VMAF per kbps (quality per bitrate unit)
-        if bitrate_kbps is not None and bitrate_kbps > 0:
-            metrics["vmaf_per_kbps"] = round(vmaf_mean / bitrate_kbps, 4)
-
-        # Quality per encoding second (speed/quality tradeoff)
-        if encoding_time and encoding_time > 0:
-            metrics["quality_per_encoding_second"] = round(vmaf_mean / encoding_time, 2)
-
-    return metrics
-
-
-def analyze_encoding(
-    encoding: dict[str, Any],
-    study_dir: Path,
-    clips_dir: Path,
-    metrics: list[str],
-    threads: int,
-    verbose: bool,
-) -> dict[str, Any]:
-    """Analyze a single encoding and return results."""
-    output_file = encoding["output_file"]
-    source_clip_name = encoding["source_clip"]
-
-    print(f"\nAnalyzing: {output_file}")
-    print(f"  Source: {source_clip_name}")
-
-    # Find source clip
-    source_clip = find_source_clip(source_clip_name, clips_dir)
-    if source_clip is None:
-        return {
-            "output_file": output_file,
-            "source_clip": source_clip_name,
-            "parameters": encoding["parameters"],
-            "metrics": {},
-            "file_size_bytes": encoding["file_size_bytes"],
-            "bitrate_kbps": encoding.get("bitrate_kbps"),
-            "success": False,
-            "error": f"Source clip not found: {source_clip_name}",
-        }
-
-    # Check if encoded file exists
-    encoded_file = study_dir / output_file
-    if not encoded_file.exists():
-        return {
-            "output_file": output_file,
-            "source_clip": source_clip_name,
-            "parameters": encoding["parameters"],
-            "metrics": {},
-            "file_size_bytes": encoding["file_size_bytes"],
-            "bitrate_kbps": encoding.get("bitrate_kbps"),
-            "success": False,
-            "error": f"Encoded file not found: {encoded_file}",
-        }
-
-    # Validate that source and encoded files have compatible durations
-    source_duration = get_video_duration(source_clip)
-    encoded_duration = get_video_duration(encoded_file)
-
-    if source_duration is None:
-        return {
-            "output_file": output_file,
-            "source_clip": source_clip_name,
-            "parameters": encoding["parameters"],
-            "metrics": {},
-            "file_size_bytes": encoding["file_size_bytes"],
-            "bitrate_kbps": encoding.get("bitrate_kbps"),
-            "success": False,
-            "error": f"Could not determine source clip duration: {source_clip.name}",
-        }
-
-    if encoded_duration is None:
-        return {
-            "output_file": output_file,
-            "source_clip": source_clip_name,
-            "parameters": encoding["parameters"],
-            "metrics": {},
-            "file_size_bytes": encoding["file_size_bytes"],
-            "bitrate_kbps": encoding.get("bitrate_kbps"),
-            "success": False,
-            "error": f"Could not determine encoded file duration: {output_file}",
-        }
-
-    # Check for duration mismatch (allow 1% tolerance for codec overhead)
-    duration_tolerance = 1.0  # 1 second tolerance
-    if abs(source_duration - encoded_duration) > duration_tolerance:
-        print(
-            f"  ⚠️  Duration mismatch detected:"
-            f" source={source_duration:.3f}s, encoded={encoded_duration:.3f}s"
-        )
-        if source_duration > encoded_duration:
-            print(
-                "  ⚠️  Encoded file is shorter than source. "
-                "This may indicate incorrect clip extraction or encoding."
-            )
-
-    # Get frame counts for validation (helps detect B-frame ordering issues)
-    source_info = get_video_info(source_clip)
-    encoded_info = get_video_info(encoded_file)
-    source_frames = source_info.get("frame_count", 0) if source_info else 0
-    encoded_frames = encoded_info.get("frame_count", 0) if encoded_info else 0
-
-    if source_frames > 0 and encoded_frames > 0:
-        frame_diff = abs(source_frames - encoded_frames)
-        if frame_diff > 1:  # Allow 1 frame tolerance
-            print(
-                f"  ⚠️  Frame count mismatch: source={source_frames}, encoded={encoded_frames} "
-                f"(diff={frame_diff})"
-            )
-            print(
-                "  ⚠️  This may cause inaccurate VMAF scores. Consider re-extracting clips "
-                "with lossless encoding (without --fast flag)."
-            )
-
-    start_time = time.time()
-
-    # Calculate bitrate from encoded file (video stream only)
-    bitrate_kbps = get_video_bitrate(encoded_file)
-    if bitrate_kbps is None:
-        print("  Warning: Could not determine video bitrate")
-
-    # Calculate metrics
-    result = {
-        "output_file": output_file,
-        "source_clip": source_clip_name,
-        "parameters": encoding["parameters"],
-        "metrics": {},
-        "file_size_bytes": encoding["file_size_bytes"],
-        "bitrate_kbps": bitrate_kbps,
-        "duration_seconds": encoded_duration,
-        "source_duration_seconds": source_duration,
-        "encoded_duration_seconds": encoded_duration,
-        "encoding_time_seconds": encoding.get("encoding_time_seconds"),
-        "encoding_fps": encoding.get("fps"),
-        "success": True,
-        "error": None,
-    }
-
-    # VMAF
-    if "vmaf" in metrics or "vmaf_neg" in metrics:
-        print("  Calculating VMAF (NEG mode)...")
-        vmaf_model = "version=vmaf_v0.6.1neg"
-        vmaf_stats = calculate_vmaf(
-            reference=source_clip,
-            distorted=encoded_file,
-            model=vmaf_model,
-            threads=threads,
-            verbose=verbose,
-        )
-
-        if vmaf_stats:
-            result["metrics"]["vmaf"] = vmaf_stats
-            print(
-                f"    Mean: {vmaf_stats['mean']:.2f}, "
-                f"Harmonic: {vmaf_stats['harmonic_mean']:.2f}, "
-                f"Min: {vmaf_stats['min']:.2f}"
-            )
-
-            # Warn about potential frame alignment issues
-            # High std_dev with low min scores often indicates B-frame ordering problems
-            if vmaf_stats["std_dev"] > 25 and vmaf_stats["min"] < 10:
-                print("  ⚠️  WARNING: High VMAF variance with very low minimum scores detected!")
-                print("      This typically indicates frame misalignment (comparing wrong frames).")
-                print(
-                    "      Consider re-extracting source clips with lossless encoding "
-                    "(without --fast flag)."
-                )
-                result["frame_alignment_warning"] = True
-        else:
-            result["success"] = False
-            result["error"] = "VMAF calculation failed"
-
-    # PSNR and SSIM
-    calculate_psnr = "psnr" in metrics
-    calculate_ssim = "ssim" in metrics
-
-    if calculate_psnr or calculate_ssim:
-        if calculate_psnr:
-            print("  Calculating PSNR...")
-        if calculate_ssim:
-            print("  Calculating SSIM...")
-
-        psnr_stats, ssim_stats = calculate_psnr_ssim(
-            reference=source_clip,
-            distorted=encoded_file,
-            calculate_psnr=calculate_psnr,
-            calculate_ssim=calculate_ssim,
-            verbose=verbose,
-        )
-
-        if psnr_stats:
-            result["metrics"]["psnr"] = psnr_stats
-            print(
-                f"    PSNR Y: {psnr_stats['y_mean']:.2f} dB, Avg: {psnr_stats['avg_mean']:.2f} dB"
-            )
-
-        if ssim_stats:
-            result["metrics"]["ssim"] = ssim_stats
-            print(f"    SSIM Y: {ssim_stats['y_mean']:.4f}, Avg: {ssim_stats['avg_mean']:.4f}")
-
-    # Calculate efficiency metrics
-    vmaf_mean = result["metrics"].get("vmaf", {}).get("mean")
-    if vmaf_mean:
-        result["efficiency_metrics"] = calculate_efficiency_metrics(
-            vmaf_mean=vmaf_mean,
-            file_size_bytes=result["file_size_bytes"],
-            bitrate_kbps=result["bitrate_kbps"],
-            encoding_time=result.get("encoding_time_seconds"),
-        )
-
-        if result["efficiency_metrics"]:
-            print("  Efficiency:")
-            if "vmaf_per_kbps" in result["efficiency_metrics"]:
-                print(f"    VMAF/kbps: {result['efficiency_metrics']['vmaf_per_kbps']:.4f}")
-            if "vmaf_per_mbyte" in result["efficiency_metrics"]:
-                print(f"    VMAF/MB: {result['efficiency_metrics']['vmaf_per_mbyte']:.2f}")
-
-    analysis_time = time.time() - start_time
-    result["analysis_time_seconds"] = round(analysis_time, 2)
-    print(f"  Analysis time: {analysis_time:.1f}s")
-
-    return result
-
-
-def calculate_summary(encodings: list[dict[str, Any]]) -> dict[str, Any]:
-    """Calculate summary statistics across all encodings."""
-    successful = [e for e in encodings if e.get("success")]
-
-    if not successful:
+        with open(file_path, encoding="utf-8") as f:
+            data: dict[str, Any] = json.load(f)
+            return data
+    except FileNotFoundError:
+        print(f"Error: File not found: {file_path}", file=sys.stderr)
+        sys.exit(1)
+    except json.JSONDecodeError as e:
+        print(f"Error: Invalid JSON in {file_path}: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def load_clip_metadata() -> dict[str, dict[str, Any]]:
+    """Load clip metadata to get resolution information."""
+    clip_metadata_path = Path("data/test_clips/clip_metadata.json")
+    if not clip_metadata_path.exists():
         return {}
 
-    vmaf_means = [
-        e["metrics"].get("vmaf", {}).get("mean") for e in successful if "vmaf" in e["metrics"]
+    try:
+        with open(clip_metadata_path, encoding="utf-8") as f:
+            data = json.load(f)
+            return {clip["clip_name"]: clip for clip in data.get("clips", [])}
+    except (json.JSONDecodeError, KeyError):
+        return {}
+
+
+def prepare_dataframe(
+    analysis_data: dict[str, Any],
+    encoding_metadata: dict[str, Any] | None = None,
+) -> pd.DataFrame:
+    """
+    Convert measurements data to pandas DataFrame.
+
+    Extracts key metrics and parameters into a flat structure for analysis.
+    Calculates derived metrics like bpp, vmaf_per_bpp, etc.
+
+    Supports both new format (measurements as dict) and legacy format (encodings as list).
+
+    Args:
+        analysis_data: Measurements data from measurements.json
+        encoding_metadata: Optional encoding metadata for new format (to get file sizes, encoding times)
+    """
+    clip_metadata = load_clip_metadata()
+
+    # Build encoding info lookup from encoding_metadata if provided (new format)
+    encoding_info: dict[str, dict] = {}
+    if encoding_metadata:
+        encodings_raw = encoding_metadata.get("encodings", {})
+        if isinstance(encodings_raw, dict):
+            encoding_info = encodings_raw
+        else:
+            # Legacy: list format
+            encoding_info = {e["output_file"]: e for e in encodings_raw}
+
+    # Support both new format (measurements dict) and legacy format (encodings list)
+    if "measurements" in analysis_data:
+        # New format: measurements is a dict keyed by output_file
+        measurements = analysis_data["measurements"]
+        if isinstance(measurements, dict):
+            encodings = [{"output_file": k, **v} for k, v in measurements.items()]
+        else:
+            encodings = measurements
+    else:
+        # Legacy format: encodings is a list
+        encodings = analysis_data.get("encodings", [])
+
+    rows = []
+    for encoding in encodings:
+        if not encoding.get("success", False):
+            continue
+
+        # Get resolution from clip metadata
+        source_clip = encoding["source_clip"]
+        clip_info = clip_metadata.get(source_clip, {})
+
+        # Try to get video info from measurement data first (new format)
+        video_info = encoding.get("video_info", {})
+
+        # Get dimensions - prefer video_info, fallback to clip_metadata
+        width = video_info.get("width") or clip_info.get("source_width", 0)
+        height = video_info.get("height") or clip_info.get("source_height", 0)
+        fps = video_info.get("frame_rate") or clip_info.get("source_fps", 0)
+        duration = video_info.get("duration_seconds") or clip_info.get("duration", 0)
+
+        # Get file size from encoding_metadata (new format) or measurement (legacy)
+        output_file = encoding.get("output_file", "")
+        enc_info = encoding_info.get(output_file, {})
+        file_size_bytes = enc_info.get("file_size_bytes") or encoding.get("file_size_bytes", 0)
+
+        # Get bitrate - prefer video_info (new format), fallback to top-level (legacy)
+        bitrate_kbps = video_info.get("bitrate_kbps") or encoding.get("bitrate_kbps", 0) or 0
+
+        # Get encoding time from encoding_metadata (new format) or measurement (legacy)
+        encoding_time_s = (
+            enc_info.get("encoding_time_seconds") or encoding.get("encoding_time_seconds", 0) or 0
+        )
+
+        # Get encoding fps
+        encoding_fps = enc_info.get("encoding_fps") or encoding.get("encoding_fps", 0) or 0
+
+        # Calculate total frames and pixels
+        num_frames = duration * fps if duration and fps else 0
+        total_pixels = num_frames * width * height if num_frames and width and height else 0
+
+        # Calculate normalized metrics
+        # Bytes per frame per pixel: measures file size efficiency
+        bytes_per_frame_per_pixel = 0.0
+        if total_pixels > 0:
+            bytes_per_frame_per_pixel = file_size_bytes / total_pixels
+
+        # Encoding time per frame per megapixel (in milliseconds)
+        # Measures computational cost normalized by video complexity
+        encoding_time_per_frame_per_pixel = 0.0
+        if total_pixels > 0 and encoding_time_s > 0:
+            # Convert to milliseconds per megapixel for readability
+            encoding_time_per_frame_per_pixel = (encoding_time_s * 1000) / (
+                total_pixels / 1_000_000
+            )
+
+        # Legacy bpp for backward compatibility (bits per pixel per frame)
+        bpp = 0.0
+        if bitrate_kbps and width and height and fps:
+            bitrate_bps = bitrate_kbps * 1000
+            pixels_per_second = width * height * fps
+            bpp = bitrate_bps / pixels_per_second
+
+        row = {
+            # Identifiers
+            "output_file": encoding["output_file"],
+            "source_clip": source_clip,
+            # Parameters
+            "preset": encoding["parameters"]["preset"],
+            "crf": encoding["parameters"]["crf"],
+            # Resolution and duration
+            "width": width,
+            "height": height,
+            "fps": fps,
+            "duration": duration,
+            "num_frames": num_frames,
+            "total_pixels": total_pixels,
+            # File metrics
+            "file_size_mb": file_size_bytes / (1024 * 1024),
+            "file_size_bytes": file_size_bytes,
+            "bitrate_kbps": bitrate_kbps,
+            "bpp": bpp,  # Legacy metric
+            "bytes_per_frame_per_pixel": bytes_per_frame_per_pixel,
+            # Performance
+            "encoding_time_s": encoding_time_s,
+            "encoding_fps": encoding_fps,
+            "encoding_time_per_frame_per_pixel": encoding_time_per_frame_per_pixel,
+        }
+
+        # VMAF metrics
+        if vmaf := encoding["metrics"].get("vmaf"):
+            row.update(
+                {
+                    "vmaf_mean": vmaf["mean"],
+                    "vmaf_harmonic_mean": vmaf["harmonic_mean"],
+                    "vmaf_min": vmaf["min"],
+                    "vmaf_p1": vmaf["percentile_1"],
+                    "vmaf_p5": vmaf["percentile_5"],
+                    "vmaf_p25": vmaf["percentile_25"],
+                    "vmaf_median": vmaf["percentile_50"],
+                    "vmaf_p75": vmaf["percentile_75"],
+                    "vmaf_p95": vmaf["percentile_95"],
+                    "vmaf_std": vmaf["std_dev"],
+                }
+            )
+
+        # PSNR metrics
+        if psnr := encoding["metrics"].get("psnr"):
+            row["psnr_avg"] = psnr["avg_mean"]
+
+        # SSIM metrics
+        if ssim := encoding["metrics"].get("ssim"):
+            row["ssim_avg"] = ssim["avg_mean"]
+
+        rows.append(row)
+
+    df = pd.DataFrame(rows)
+
+    if df.empty:
+        return df
+
+    # Calculate derived efficiency metrics (inverted form)
+    # These metrics answer: "How many bytes per pixel per frame do I need to achieve this quality?"
+    # Lower values = more efficient (fewer bytes needed for same quality)
+
+    # Bytes per VMAF point per frame per pixel (file size efficiency)
+    # This tells us how many bytes per pixel we need to allocate per VMAF score point
+    df["bytes_per_vmaf_per_frame_per_pixel"] = np.where(
+        df["vmaf_mean"] > 0,
+        df["bytes_per_frame_per_pixel"] / df["vmaf_mean"],
+        np.nan,
+    )
+
+    # Bytes per P5-VMAF point per frame per pixel (worst-case quality efficiency)
+    df["bytes_per_p5_vmaf_per_frame_per_pixel"] = np.where(
+        df["vmaf_p5"] > 0,
+        df["bytes_per_frame_per_pixel"] / df["vmaf_p5"],
+        np.nan,
+    )
+
+    # Combined efficiency: Bytes per VMAF point per encoding second
+    # This tells us the file size cost per quality point per second of encoding time
+    # The per-frame-per-pixel terms cancel out: (bytes/frame/pixel / vmaf) / (time/frame/pixel) = bytes / vmaf / time
+    df["bytes_per_vmaf_per_encoding_time"] = np.where(
+        (df["vmaf_mean"] > 0) & (df["encoding_time_s"] > 0),
+        df["file_size_bytes"] / df["vmaf_mean"] / df["encoding_time_s"],
+        np.nan,
+    )
+
+    # Combined efficiency with P5-VMAF (worst-case)
+    df["bytes_per_p5_vmaf_per_encoding_time"] = np.where(
+        (df["vmaf_p5"] > 0) & (df["encoding_time_s"] > 0),
+        df["file_size_bytes"] / df["vmaf_p5"] / df["encoding_time_s"],
+        np.nan,
+    )
+
+    # Legacy metrics for backward compatibility
+    df["vmaf_per_bpp"] = np.where(
+        df["bpp"] > 0,
+        df["vmaf_mean"] / df["bpp"],
+        np.nan,
+    )
+    df["p5_vmaf_per_bpp"] = np.where(
+        df["bpp"] > 0,
+        df["vmaf_p5"] / df["bpp"],
+        np.nan,
+    )
+
+    return df
+
+
+def aggregate_by_params(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Aggregate data by preset and CRF, computing mean across all clips.
+
+    Returns a DataFrame with one row per (preset, crf) combination.
+    """
+    numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+    # Remove preset and crf from aggregation columns
+    agg_cols = [c for c in numeric_cols if c not in ["preset", "crf"]]
+
+    aggregated = df.groupby(["preset", "crf"])[agg_cols].mean().reset_index()
+    return aggregated
+
+
+def get_line_colors_and_markers(n: int) -> tuple[list, list]:
+    """Get n distinct colors and markers for line plots.
+
+    Returns:
+        tuple: (colors, markers) where colors are from tab10 and markers cycle through shapes
+    """
+    cmap = plt.colormaps.get_cmap(LINE_PALETTE)
+    colors = [cmap(i % 10) for i in range(n)]  # tab10 has 10 colors
+    markers = [LINE_MARKERS[i % len(LINE_MARKERS)] for i in range(n)]
+    return colors, markers
+
+
+def plot_heatmap(
+    df: pd.DataFrame,
+    metric: str,
+    metric_label: str,
+    output_dir: Path,
+    study_name: str,
+    higher_is_better: bool = True,
+) -> None:
+    """
+    Plot a heatmap of the metric vs CRF (y-axis) and Preset (x-axis).
+
+    Uses viridis colormap for colorblind accessibility.
+    """
+    pivot = df.pivot(index="crf", columns="preset", values=metric)
+
+    if pivot.empty or pivot.isna().all().all():
+        print(f"  Skipping heatmap for {metric}: no data available", file=sys.stderr)
+        return
+
+    fig, ax = plt.subplots(figsize=(10, 7))
+
+    # Use viridis, reversed if lower is better
+    cmap = COLORMAP if higher_is_better else f"{COLORMAP}_r"
+
+    sns.heatmap(
+        pivot,
+        annot=True,
+        fmt=".2f",
+        cmap=cmap,
+        ax=ax,
+        cbar_kws={"label": metric_label},
+        linewidths=0.5,
+        linecolor="white",
+    )
+
+    ax.set_xlabel("Preset (lower = slower, higher quality)")
+    ax.set_ylabel("CRF (lower = higher bitrate/quality)")
+    ax.set_title(f"{study_name}: {metric_label}\n(Preset vs CRF)")
+
+    output_path = output_dir / f"{study_name}_heatmap_{metric}.webp"
+    plt.savefig(output_path)
+    print(f"  Saved: {output_path}")
+    plt.close(fig)
+
+
+def plot_vs_crf(
+    df: pd.DataFrame,
+    metric: str,
+    metric_label: str,
+    output_dir: Path,
+    study_name: str,
+) -> None:
+    """
+    Plot metric vs CRF, with one line per preset.
+
+    Uses colorful palette with varying markers for accessibility.
+    """
+    presets = sorted(df["preset"].unique())
+    colors, markers = get_line_colors_and_markers(len(presets))
+
+    fig, ax = plt.subplots(figsize=(10, 7))
+
+    for preset, color, marker in zip(presets, colors, markers, strict=True):
+        preset_data = df[df["preset"] == preset].sort_values("crf")
+        if preset_data[metric].isna().all():
+            continue
+        ax.plot(
+            preset_data["crf"],
+            preset_data[metric],
+            marker=marker,
+            linewidth=2,
+            markersize=8,
+            label=f"Preset {preset}",
+            color=color,
+        )
+
+    ax.set_xlabel("CRF (lower = higher bitrate/quality)")
+    ax.set_ylabel(metric_label)
+    ax.set_title(f"{study_name}: {metric_label} vs CRF")
+    ax.legend(title="Preset", loc="best")
+    ax.grid(True, alpha=0.3)
+
+    # Set integer ticks for CRF
+    ax.set_xticks(sorted(df["crf"].unique()))
+
+    output_path = output_dir / f"{study_name}_vs_crf_{metric}.webp"
+    plt.savefig(output_path)
+    print(f"  Saved: {output_path}")
+    plt.close(fig)
+
+
+def plot_vs_preset(
+    df: pd.DataFrame,
+    metric: str,
+    metric_label: str,
+    output_dir: Path,
+    study_name: str,
+) -> None:
+    """
+    Plot metric vs preset, with one line per CRF.
+
+    Uses colorful palette with varying markers for accessibility.
+    """
+    crfs = sorted(df["crf"].unique())
+    colors, markers = get_line_colors_and_markers(len(crfs))
+
+    fig, ax = plt.subplots(figsize=(10, 7))
+
+    for crf, color, marker in zip(crfs, colors, markers, strict=True):
+        crf_data = df[df["crf"] == crf].sort_values("preset")
+        if crf_data[metric].isna().all():
+            continue
+        ax.plot(
+            crf_data["preset"],
+            crf_data[metric],
+            marker=marker,
+            linewidth=2,
+            markersize=8,
+            label=f"CRF {crf}",
+            color=color,
+        )
+
+    ax.set_xlabel("Preset (lower = slower, higher quality)")
+    ax.set_ylabel(metric_label)
+    ax.set_title(f"{study_name}: {metric_label} vs Preset")
+    ax.legend(title="CRF", loc="best")
+    ax.grid(True, alpha=0.3)
+
+    # Set integer ticks for preset
+    ax.set_xticks(sorted(df["preset"].unique()))
+
+    output_path = output_dir / f"{study_name}_vs_preset_{metric}.webp"
+    plt.savefig(output_path)
+    print(f"  Saved: {output_path}")
+    plt.close(fig)
+
+
+def plot_vmaf_combined_vs_crf(
+    df: pd.DataFrame,
+    output_dir: Path,
+    study_name: str,
+) -> None:
+    """
+    Plot VMAF mean and P5 vs CRF on the same plot.
+
+    Mean: solid lines with filled markers
+    P5: dashed lines with open (unfilled) markers
+    Same color and marker shape for each preset across both metrics.
+    """
+    presets = sorted(df["preset"].unique())
+    colors, markers = get_line_colors_and_markers(len(presets))
+
+    fig, ax = plt.subplots(figsize=(10, 7))
+
+    # Plot VMAF mean (solid lines, filled markers)
+    for preset, color, marker in zip(presets, colors, markers, strict=True):
+        preset_data = df[df["preset"] == preset].sort_values("crf")
+        if preset_data["vmaf_mean"].isna().all():
+            continue
+        ax.plot(
+            preset_data["crf"],
+            preset_data["vmaf_mean"],
+            marker=marker,
+            linestyle="-",
+            linewidth=2,
+            markersize=8,
+            label=f"Preset {preset} (Mean)",
+            color=color,
+            markerfacecolor=color,
+        )
+
+    # Plot VMAF P5 (dashed lines, open markers)
+    for preset, color, marker in zip(presets, colors, markers, strict=True):
+        preset_data = df[df["preset"] == preset].sort_values("crf")
+        if preset_data["vmaf_p5"].isna().all():
+            continue
+        ax.plot(
+            preset_data["crf"],
+            preset_data["vmaf_p5"],
+            marker=marker,
+            linestyle="--",
+            linewidth=2,
+            markersize=8,
+            label=f"Preset {preset} (P5)",
+            color=color,
+            markerfacecolor="none",
+            markeredgewidth=2,
+        )
+
+    ax.set_xlabel("CRF (lower = higher bitrate/quality)")
+    ax.set_ylabel("VMAF Score")
+    ax.set_title(f"{study_name}: VMAF Score (Mean and P5) vs CRF")
+    ax.legend(title="Metric", loc="best", ncol=2, fontsize=8)
+    ax.grid(True, alpha=0.3)
+    ax.set_xticks(sorted(df["crf"].unique()))
+
+    output_path = output_dir / f"{study_name}_vs_crf_vmaf_combined.webp"
+    plt.savefig(output_path)
+    print(f"  Saved: {output_path}")
+    plt.close(fig)
+
+
+def plot_vmaf_combined_vs_preset(
+    df: pd.DataFrame,
+    output_dir: Path,
+    study_name: str,
+) -> None:
+    """
+    Plot VMAF mean and P5 vs preset on the same plot.
+
+    Mean: solid lines with filled markers
+    P5: dashed lines with open (unfilled) markers
+    Same color and marker shape for each CRF across both metrics.
+    """
+    crfs = sorted(df["crf"].unique())
+    colors, markers = get_line_colors_and_markers(len(crfs))
+
+    fig, ax = plt.subplots(figsize=(10, 7))
+
+    # Plot VMAF mean (solid lines, filled markers)
+    for crf, color, marker in zip(crfs, colors, markers, strict=True):
+        crf_data = df[df["crf"] == crf].sort_values("preset")
+        if crf_data["vmaf_mean"].isna().all():
+            continue
+        ax.plot(
+            crf_data["preset"],
+            crf_data["vmaf_mean"],
+            marker=marker,
+            linestyle="-",
+            linewidth=2,
+            markersize=8,
+            label=f"CRF {crf} (Mean)",
+            color=color,
+            markerfacecolor=color,
+        )
+
+    # Plot VMAF P5 (dashed lines, open markers)
+    for crf, color, marker in zip(crfs, colors, markers, strict=True):
+        crf_data = df[df["crf"] == crf].sort_values("preset")
+        if crf_data["vmaf_p5"].isna().all():
+            continue
+        ax.plot(
+            crf_data["preset"],
+            crf_data["vmaf_p5"],
+            marker=marker,
+            linestyle="--",
+            linewidth=2,
+            markersize=8,
+            label=f"CRF {crf} (P5)",
+            color=color,
+            markerfacecolor="none",
+            markeredgewidth=2,
+        )
+
+    ax.set_xlabel("Preset (lower = slower, higher quality)")
+    ax.set_ylabel("VMAF Score")
+    ax.set_title(f"{study_name}: VMAF Score (Mean and P5) vs Preset")
+    ax.legend(title="Metric", loc="best", ncol=2, fontsize=8)
+    ax.grid(True, alpha=0.3)
+    ax.set_xticks(sorted(df["preset"].unique()))
+
+    output_path = output_dir / f"{study_name}_vs_preset_vmaf_combined.webp"
+    plt.savefig(output_path)
+    print(f"  Saved: {output_path}")
+    plt.close(fig)
+
+
+def plot_metric_trio(
+    df: pd.DataFrame,
+    metric: str,
+    metric_label: str,
+    output_dir: Path,
+    study_name: str,
+    higher_is_better: bool = True,
+) -> None:
+    """
+    Generate the trio of plots for a metric:
+      1. Heatmap (CRF vs Preset)
+      2. Line chart vs CRF
+      3. Line chart vs Preset
+
+    Special case: vmaf_combined generates combined mean+p5 plots.
+    """
+    # Special handling for combined VMAF plot
+    if metric == "vmaf_combined":
+        if "vmaf_mean" not in df.columns or "vmaf_p5" not in df.columns:
+            print(f"Skipping {metric}: vmaf_mean or vmaf_p5 not available", file=sys.stderr)
+            return
+        print(f"\nGenerating plots for: {metric_label}")
+        # Still generate heatmaps for mean and p5 separately
+        plot_heatmap(df, "vmaf_mean", "VMAF Mean Score", output_dir, study_name, higher_is_better)
+        plot_heatmap(df, "vmaf_p5", "VMAF 5th Percentile", output_dir, study_name, higher_is_better)
+        # Combined line plots
+        plot_vmaf_combined_vs_crf(df, output_dir, study_name)
+        plot_vmaf_combined_vs_preset(df, output_dir, study_name)
+        return
+
+    if metric not in df.columns or df[metric].isna().all():
+        print(f"Skipping {metric}: no data available", file=sys.stderr)
+        return
+
+    print(f"\nGenerating plots for: {metric_label}")
+
+    plot_heatmap(df, metric, metric_label, output_dir, study_name, higher_is_better)
+    plot_vs_crf(df, metric, metric_label, output_dir, study_name)
+    plot_vs_preset(df, metric, metric_label, output_dir, study_name)
+
+
+def plot_clip_duration_analysis(
+    df: pd.DataFrame,
+    output_dir: Path,
+    study_name: str,
+) -> None:
+    """
+    Plot efficiency metrics against clip duration (frames or total pixels).
+
+    This helps determine if short clips are sufficient for codec testing.
+    X-axis options:
+      1. Number of frames: duration * fps
+      2. Total pixels: frames * width * height
+
+    Y-axis: efficiency metrics like vmaf_per_bpp or p5_vmaf_per_bpp
+
+    Each point represents one clip's average performance across all presets/CRF values.
+    """
+    clip_metadata = load_clip_metadata()
+
+    # Calculate frames and total pixels for each clip
+    clip_stats = []
+    for clip_name in df["source_clip"].unique():
+        clip_info = clip_metadata.get(clip_name, {})
+        duration = clip_info.get("actual_duration", 0)
+        fps = clip_info.get("source_fps", 0)
+        width = clip_info.get("source_width", 0)
+        height = clip_info.get("source_height", 0)
+
+        if duration and fps and width and height:
+            frames = int(duration * fps)
+            total_pixels = frames * width * height
+
+            # Get average metrics for this clip across all encodings
+            clip_data = df[df["source_clip"] == clip_name]
+            clip_stats.append(
+                {
+                    "clip_name": clip_name,
+                    "frames": frames,
+                    "total_pixels": total_pixels,
+                    "width": width,
+                    "height": height,
+                    "fps": fps,
+                    "duration": duration,
+                    "vmaf_mean": clip_data["vmaf_mean"].mean(),
+                    "vmaf_p5": clip_data["vmaf_p5"].mean(),
+                    "bytes_per_vmaf_per_frame_per_pixel": clip_data[
+                        "bytes_per_vmaf_per_frame_per_pixel"
+                    ].mean(),
+                    "bytes_per_p5_vmaf_per_frame_per_pixel": clip_data[
+                        "bytes_per_p5_vmaf_per_frame_per_pixel"
+                    ].mean(),
+                    "bytes_per_frame_per_pixel": clip_data["bytes_per_frame_per_pixel"].mean(),
+                }
+            )
+
+    if len(clip_stats) < 2:
+        print("Skipping duration analysis (insufficient clip data)", file=sys.stderr)
+        return
+
+    clip_df = pd.DataFrame(clip_stats)
+
+    # Define metrics to plot with both x-axis types
+    duration_metrics = [
+        ("bytes_per_vmaf_per_frame_per_pixel", "Bytes per VMAF Point per Frame per Pixel"),
+        ("bytes_per_p5_vmaf_per_frame_per_pixel", "Bytes per P5-VMAF Point per Frame per Pixel"),
     ]
-    bitrates = [e["bitrate_kbps"] for e in successful if e.get("bitrate_kbps")]
 
-    summary = {
-        "total_analysis_time_seconds": sum(e.get("analysis_time_seconds", 0) for e in encodings)
-    }
-
-    if vmaf_means:
-        summary["vmaf_range"] = {
-            "min_mean": round(min(vmaf_means), 2),
-            "max_mean": round(max(vmaf_means), 2),
-        }
-
-    if bitrates:
-        summary["bitrate_range_kbps"] = {
-            "min": round(min(bitrates), 2),
-            "max": round(max(bitrates), 2),
-        }
-
-    # Find best efficiency (VMAF per kbps)
-    with_efficiency = [
-        e for e in successful if e.get("efficiency_metrics", {}).get("vmaf_per_kbps")
+    x_axis_configs = [
+        ("frames", "Number of Frames", 1),
+        ("total_pixels", "Total Pixels (frames x width x height)", 1e6),
     ]
-    if with_efficiency:
-        best_eff = max(with_efficiency, key=lambda e: e["efficiency_metrics"]["vmaf_per_kbps"])
-        summary["best_efficiency"] = {
-            "output_file": best_eff["output_file"],
-            "parameters": best_eff["parameters"],
-            "vmaf_mean": best_eff["metrics"]["vmaf"]["mean"],
-            "vmaf_per_kbps": best_eff["efficiency_metrics"]["vmaf_per_kbps"],
-            "bitrate_kbps": best_eff["bitrate_kbps"],
-        }
 
-    # Find best quality (highest VMAF)
-    if vmaf_means:
-        with_vmaf = [e for e in successful if "vmaf" in e["metrics"]]
-        best_quality = max(with_vmaf, key=lambda e: e["metrics"]["vmaf"]["mean"])
-        summary["best_quality"] = {
-            "output_file": best_quality["output_file"],
-            "parameters": best_quality["parameters"],
-            "vmaf_mean": best_quality["metrics"]["vmaf"]["mean"],
-            "bitrate_kbps": best_quality["bitrate_kbps"],
-        }
+    for metric, metric_label in duration_metrics:
+        if metric not in clip_df.columns or clip_df[metric].isna().all():
+            continue
 
-    return summary
+        for x_col, x_label, scale_factor in x_axis_configs:
+            fig, ax = plt.subplots(figsize=(10, 7))
+
+            # Scale x values for readability
+            x_values = clip_df[x_col] / scale_factor
+
+            # Scatter plot with point size proportional to resolution
+            sizes = (clip_df["width"] * clip_df["height"]) / 10000  # Scale for visibility
+
+            scatter = ax.scatter(
+                x_values,
+                clip_df[metric],
+                s=sizes,
+                alpha=0.6,
+                c=clip_df["fps"],
+                cmap="viridis",
+                edgecolors="black",
+                linewidths=0.5,
+            )
+
+            # Add colorbar for FPS
+            cbar = plt.colorbar(scatter, ax=ax)
+            cbar.set_label("FPS (frames per second)")
+
+            # Add trend line
+            if len(clip_df) >= 3:  # Need at least 3 points for meaningful trend
+                z = np.polyfit(x_values, clip_df[metric], 1)
+                p = np.poly1d(z)
+                ax.plot(
+                    x_values,
+                    p(x_values),
+                    "r--",
+                    alpha=0.5,
+                    linewidth=2,
+                    label=f"Trend: {z[0]:.2e}x + {z[1]:.2f}",
+                )
+
+            # Formatting
+            ax.set_xlabel(f"{x_label}" + (f" (x {scale_factor:.0e})" if scale_factor != 1 else ""))
+            ax.set_ylabel(metric_label)
+            ax.set_title(
+                f"{study_name}: {metric_label} vs Clip Duration\n"
+                f"(Point size = resolution, color = FPS)"
+            )
+            ax.grid(True, alpha=0.3)
+            if len(clip_df) >= 3:
+                ax.legend()
+
+            # Save plot
+            x_suffix = "frames" if x_col == "frames" else "pixels"
+            output_path = output_dir / f"{study_name}_duration_{metric}_{x_suffix}.webp"
+            plt.savefig(output_path)
+            print(f"  Saved: {output_path}")
+            plt.close(fig)
 
 
-def main():
+def plot_clip_comparison(
+    df: pd.DataFrame,
+    output_dir: Path,
+    study_name: str,
+) -> None:
+    """
+    Plot per-clip comparison: one line per clip, x-axis = preset.
+
+    Uses line plots instead of bar charts for clearer trend comparison.
+    Generates separate figures for key metrics.
+    """
+    clips = df["source_clip"].unique()
+    if len(clips) < 2:
+        print("Skipping clip comparison (only one clip)", file=sys.stderr)
+        return
+
+    # Metrics to compare per clip (excluding VMAF which gets special treatment)
+    clip_metrics = [
+        ("bytes_per_vmaf_per_frame_per_pixel", "Bytes per VMAF Point per Frame per Pixel"),
+        ("bytes_per_frame_per_pixel", "Bytes per Frame per Pixel"),
+    ]
+
+    colors, markers = get_line_colors_and_markers(len(clips))
+
+    # Special handling for VMAF: plot mean and P5 together
+    if "vmaf_mean" in df.columns and "vmaf_p5" in df.columns:
+        # Aggregate by clip and preset (mean over CRF values)
+        clip_data_mean = df.groupby(["source_clip", "preset"])["vmaf_mean"].mean().reset_index()
+        clip_data_p5 = df.groupby(["source_clip", "preset"])["vmaf_p5"].mean().reset_index()
+
+        fig, ax = plt.subplots(figsize=(10, 7))
+
+        # Plot VMAF mean (solid lines, filled markers)
+        for clip, color, marker in zip(clips, colors, markers, strict=True):
+            subset = clip_data_mean[clip_data_mean["source_clip"] == clip].sort_values("preset")
+            if subset.empty:
+                continue
+            # Shorten clip name for legend
+            clip_short = clip.replace(".mp4", "").replace(".mkv", "")
+            ax.plot(
+                subset["preset"],
+                subset["vmaf_mean"],
+                marker=marker,
+                linestyle="-",
+                linewidth=2,
+                markersize=8,
+                label=f"{clip_short} (Mean)",
+                color=color,
+                markerfacecolor=color,
+            )
+
+        # Plot VMAF P5 (dashed lines, open markers)
+        for clip, color, marker in zip(clips, colors, markers, strict=True):
+            subset = clip_data_p5[clip_data_p5["source_clip"] == clip].sort_values("preset")
+            if subset.empty:
+                continue
+            # Shorten clip name for legend
+            clip_short = clip.replace(".mp4", "").replace(".mkv", "")
+            ax.plot(
+                subset["preset"],
+                subset["vmaf_p5"],
+                marker=marker,
+                linestyle="--",
+                linewidth=2,
+                markersize=8,
+                label=f"{clip_short} (P5)",
+                color=color,
+                markerfacecolor="none",
+                markeredgewidth=2,
+            )
+
+        ax.set_xlabel("Preset (lower = slower, higher quality)")
+        ax.set_ylabel("VMAF Score")
+        ax.set_title(f"{study_name}: VMAF Score (Mean and P5) by Clip vs Preset")
+        ax.legend(title="Clip", loc="best", fontsize=7, ncol=2)
+        ax.grid(True, alpha=0.3)
+        ax.set_xticks(sorted(df["preset"].unique()))
+
+        output_path = output_dir / f"{study_name}_clip_vmaf_combined.webp"
+        plt.savefig(output_path)
+        print(f"  Saved: {output_path}")
+        plt.close(fig)
+
+    # Plot other metrics
+    for metric, metric_label in clip_metrics:
+        if metric not in df.columns:
+            continue
+
+        # Aggregate by clip and preset (mean over CRF values)
+        clip_data = df.groupby(["source_clip", "preset"])[metric].mean().reset_index()
+
+        fig, ax = plt.subplots(figsize=(10, 7))
+
+        for clip, color, marker in zip(clips, colors, markers, strict=True):
+            subset = clip_data[clip_data["source_clip"] == clip].sort_values("preset")
+            if subset.empty:
+                continue
+            # Shorten clip name for legend
+            clip_short = clip.replace(".mp4", "").replace(".mkv", "")
+            ax.plot(
+                subset["preset"],
+                subset[metric],
+                marker=marker,
+                linewidth=2,
+                markersize=8,
+                label=clip_short,
+                color=color,
+            )
+
+        ax.set_xlabel("Preset (lower = slower, higher quality)")
+        ax.set_ylabel(metric_label)
+        ax.set_title(f"{study_name}: {metric_label} by Clip vs Preset")
+        ax.legend(title="Clip", loc="best", fontsize=8)
+        ax.grid(True, alpha=0.3)
+        ax.set_xticks(sorted(df["preset"].unique()))
+
+        output_path = output_dir / f"{study_name}_clip_{metric}.webp"
+        plt.savefig(output_path)
+        print(f"  Saved: {output_path}")
+        plt.close(fig)
+
+
+def plot_clip_comparison_vs_crf(
+    df: pd.DataFrame,
+    output_dir: Path,
+    study_name: str,
+) -> None:
+    """
+    Plot per-clip comparison: one line per clip, x-axis = CRF.
+
+    Twin of plot_clip_comparison but with CRF on x-axis instead of preset.
+    Uses line plots for clearer trend comparison.
+    """
+    clips = df["source_clip"].unique()
+    if len(clips) < 2:
+        print("Skipping clip comparison vs CRF (only one clip)", file=sys.stderr)
+        return
+
+    # Same metrics as plot_clip_comparison (excluding VMAF which gets special treatment)
+    clip_metrics = [
+        ("bytes_per_vmaf_per_frame_per_pixel", "Bytes per VMAF Point per Frame per Pixel"),
+        ("bytes_per_frame_per_pixel", "Bytes per Frame per Pixel"),
+    ]
+
+    colors, markers = get_line_colors_and_markers(len(clips))
+
+    # Special handling for VMAF: plot mean and P5 together
+    if "vmaf_mean" in df.columns and "vmaf_p5" in df.columns:
+        # Aggregate by clip and CRF (mean over preset values)
+        clip_data_mean = df.groupby(["source_clip", "crf"])["vmaf_mean"].mean().reset_index()
+        clip_data_p5 = df.groupby(["source_clip", "crf"])["vmaf_p5"].mean().reset_index()
+
+        fig, ax = plt.subplots(figsize=(10, 7))
+
+        # Plot VMAF mean (solid lines, filled markers)
+        for clip, color, marker in zip(clips, colors, markers, strict=True):
+            subset = clip_data_mean[clip_data_mean["source_clip"] == clip].sort_values("crf")
+            if subset.empty:
+                continue
+            # Shorten clip name for legend
+            clip_short = clip.replace(".mp4", "").replace(".mkv", "")
+            ax.plot(
+                subset["crf"],
+                subset["vmaf_mean"],
+                marker=marker,
+                linestyle="-",
+                linewidth=2,
+                markersize=8,
+                label=f"{clip_short} (Mean)",
+                color=color,
+                markerfacecolor=color,
+            )
+
+        # Plot VMAF P5 (dashed lines, open markers)
+        for clip, color, marker in zip(clips, colors, markers, strict=True):
+            subset = clip_data_p5[clip_data_p5["source_clip"] == clip].sort_values("crf")
+            if subset.empty:
+                continue
+            # Shorten clip name for legend
+            clip_short = clip.replace(".mp4", "").replace(".mkv", "")
+            ax.plot(
+                subset["crf"],
+                subset["vmaf_p5"],
+                marker=marker,
+                linestyle="--",
+                linewidth=2,
+                markersize=8,
+                label=f"{clip_short} (P5)",
+                color=color,
+                markerfacecolor="none",
+                markeredgewidth=2,
+            )
+
+        ax.set_xlabel("CRF (lower = higher bitrate/quality)")
+        ax.set_ylabel("VMAF Score")
+        ax.set_title(f"{study_name}: VMAF Score (Mean and P5) by Clip vs CRF")
+        ax.legend(title="Clip", loc="best", fontsize=7, ncol=2)
+        ax.grid(True, alpha=0.3)
+        ax.set_xticks(sorted(df["crf"].unique()))
+
+        output_path = output_dir / f"{study_name}_clip_vs_crf_vmaf_combined.webp"
+        plt.savefig(output_path)
+        print(f"  Saved: {output_path}")
+        plt.close(fig)
+
+    # Plot other metrics
+    for metric, metric_label in clip_metrics:
+        if metric not in df.columns:
+            continue
+
+        # Aggregate by clip and CRF (mean over preset values)
+        clip_data = df.groupby(["source_clip", "crf"])[metric].mean().reset_index()
+
+        fig, ax = plt.subplots(figsize=(10, 7))
+
+        for clip, color, marker in zip(clips, colors, markers, strict=True):
+            subset = clip_data[clip_data["source_clip"] == clip].sort_values("crf")
+            if subset.empty:
+                continue
+            # Shorten clip name for legend
+            clip_short = clip.replace(".mp4", "").replace(".mkv", "")
+            ax.plot(
+                subset["crf"],
+                subset[metric],
+                marker=marker,
+                linewidth=2,
+                markersize=8,
+                label=clip_short,
+                color=color,
+            )
+
+        ax.set_xlabel("CRF (lower = higher bitrate/quality)")
+        ax.set_ylabel(metric_label)
+        ax.set_title(f"{study_name}: {metric_label} by Clip vs CRF")
+        ax.legend(title="Clip", loc="best", fontsize=8)
+        ax.grid(True, alpha=0.3)
+        ax.set_xticks(sorted(df["crf"].unique()))
+
+        output_path = output_dir / f"{study_name}_clip_vs_crf_{metric}.webp"
+        plt.savefig(output_path)
+        print(f"  Saved: {output_path}")
+        plt.close(fig)
+
+
+def export_csv(df: pd.DataFrame, output_dir: Path, study_name: str) -> None:
+    """Export raw dataframe to CSV for further analysis."""
+    output_path = output_dir / f"{study_name}_raw_data.csv"
+    df.to_csv(output_path, index=False)
+    print(f"Saved: {output_path}")
+
+
+def export_aggregated_csv(df: pd.DataFrame, output_dir: Path, study_name: str) -> None:
+    """Export aggregated dataframe to CSV."""
+    output_path = output_dir / f"{study_name}_aggregated.csv"
+    df.to_csv(output_path, index=False)
+    print(f"Saved: {output_path}")
+
+
+def generate_summary_report(
+    df: pd.DataFrame,
+    agg_df: pd.DataFrame,
+    analysis_data: dict[str, Any],
+    output_dir: Path,
+    study_name: str,
+) -> None:
+    """Generate a text summary report with key findings."""
+    report_path = output_dir / f"{study_name}_report.txt"
+
+    with open(report_path, "w", encoding="utf-8") as f:
+        f.write(f"Analysis Report: {study_name}\n")
+        f.write("=" * 80 + "\n\n")
+
+        # Study metadata
+        f.write("Study Metadata\n")
+        f.write("-" * 40 + "\n")
+        # Handle both new and legacy field names
+        measurement_date = analysis_data.get("measurement_date") or analysis_data.get(
+            "analysis_date", "N/A"
+        )
+        f.write(f"Measurement Date: {measurement_date}\n")
+        f.write(f"VMAF Model: {analysis_data['vmaf_model']}\n")
+        clips_count = analysis_data.get("clips_measured") or analysis_data.get(
+            "clips_analyzed", "N/A"
+        )
+        f.write(f"Clips Measured: {clips_count}\n")
+        total_count = analysis_data.get("total_measurements") or analysis_data.get(
+            "total_encodings_analyzed", "N/A"
+        )
+        f.write(f"Total Measurements: {total_count}\n")
+        f.write(f"Metrics: {', '.join(analysis_data['metrics_calculated']).upper()}\n")
+        f.write("\n")
+
+        # Parameter ranges
+        f.write("Parameter Ranges\n")
+        f.write("-" * 40 + "\n")
+        f.write(f"Presets: {sorted(int(p) for p in df['preset'].unique())}\n")
+        f.write(f"CRF values: {sorted(int(c) for c in df['crf'].unique())}\n")
+        f.write("\n")
+
+        # Key statistics (aggregated across clips)
+        f.write("Aggregated Statistics (Mean Across Clips)\n")
+        f.write("-" * 40 + "\n")
+
+        for metric, label, _ in METRICS:
+            if metric in agg_df.columns and not agg_df[metric].isna().all():
+                min_val = agg_df[metric].min()
+                max_val = agg_df[metric].max()
+                f.write(f"{label}:\n")
+                f.write(f"  Range: {min_val:.3f} - {max_val:.3f}\n")
+
+        f.write("\n")
+
+        # Best configurations
+        f.write("Best Configurations (Aggregated)\n")
+        f.write("-" * 40 + "\n")
+
+        if "vmaf_mean" in agg_df.columns:
+            best = agg_df.loc[agg_df["vmaf_mean"].idxmax()]
+            f.write("Highest VMAF Mean:\n")
+            f.write(f"  Preset {int(best['preset'])}, CRF {int(best['crf'])}\n")
+            f.write(f"  VMAF: {best['vmaf_mean']:.2f}\n")
+            if "bytes_per_frame_per_pixel" in agg_df.columns:
+                f.write(f"  Bytes/frame/pixel: {best['bytes_per_frame_per_pixel']:.6f}\n")
+            f.write("\n")
+
+        if (
+            "bytes_per_vmaf_per_frame_per_pixel" in agg_df.columns
+            and not agg_df["bytes_per_vmaf_per_frame_per_pixel"].isna().all()
+        ):
+            best = agg_df.loc[
+                agg_df["bytes_per_vmaf_per_frame_per_pixel"].idxmin()
+            ]  # Lower is better
+            f.write("Best File Size Efficiency (Lowest Bytes per VMAF per Frame per Pixel):\n")
+            f.write(f"  Preset {int(best['preset'])}, CRF {int(best['crf'])}\n")
+            f.write(
+                f"  Bytes per VMAF per frame per pixel: {best['bytes_per_vmaf_per_frame_per_pixel']:.8f}\n"
+            )
+            f.write(
+                f"  VMAF: {best['vmaf_mean']:.2f}, Bytes/frame/pixel: {best['bytes_per_frame_per_pixel']:.6f}\n"
+            )
+            f.write("\n")
+
+        if (
+            "bytes_per_vmaf_per_encoding_time" in agg_df.columns
+            and not agg_df["bytes_per_vmaf_per_encoding_time"].isna().all()
+        ):
+            best = agg_df.loc[
+                agg_df["bytes_per_vmaf_per_encoding_time"].idxmin()
+            ]  # Lower is better
+            f.write("Best Overall Efficiency (Lowest Bytes per VMAF per Encoding Second):\n")
+            f.write(f"  Preset {int(best['preset'])}, CRF {int(best['crf'])}\n")
+            f.write(
+                f"  Bytes per VMAF per second: {best['bytes_per_vmaf_per_encoding_time']:.2f}\n"
+            )
+            f.write(
+                f"  VMAF: {best['vmaf_mean']:.2f}, Encoding time: {best['encoding_time_s']:.2f}s\n"
+            )
+            f.write("\n")
+
+        if "bytes_per_frame_per_pixel" in agg_df.columns:
+            smallest = agg_df.loc[agg_df["bytes_per_frame_per_pixel"].idxmin()]
+            f.write("Smallest File Size (Lowest Bytes per Frame per Pixel):\n")
+            f.write(f"  Preset {int(smallest['preset'])}, CRF {int(smallest['crf'])}\n")
+            f.write(f"  Bytes/frame/pixel: {smallest['bytes_per_frame_per_pixel']:.6f}\n")
+            if "vmaf_mean" in agg_df.columns:
+                f.write(f"  VMAF: {smallest['vmaf_mean']:.2f}\n")
+            f.write("\n")
+
+    print(f"Saved: {report_path}")
+
+
+def main() -> None:
+    """Main entry point."""
     parser = argparse.ArgumentParser(
-        description="Analyze encoded videos from a study by calculating quality metrics",
+        description="Visualize and analyze encoding study results",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
+  # Analyze baseline_sweep study with all plots
   %(prog)s baseline_sweep
-  %(prog)s baseline_sweep --metrics vmaf
-  %(prog)s film_grain --metrics vmaf psnr ssim
-  %(prog)s baseline_sweep --threads 8 -v
-  %(prog)s baseline_sweep --continue-on-error
+
+  # Analyze specific metrics only
+  %(prog)s baseline_sweep --metrics vmaf_combined bytes_per_vmaf_per_frame_per_pixel
+
+  # Skip per-clip comparison plots
+  %(prog)s baseline_sweep --no-clip-plots
+
+Available metrics (all normalized per-frame-per-pixel):
+  vmaf_combined                         - VMAF Mean and P5 (combined plot)
+  bytes_per_frame_per_pixel             - File size efficiency (bytes per pixel per frame)
+  bytes_per_vmaf_per_frame_per_pixel    - Bytes needed per VMAF point per pixel per frame
+  bytes_per_p5_vmaf_per_frame_per_pixel - Bytes needed per P5-VMAF point (worst-case)
+  encoding_time_per_frame_per_pixel     - Computational cost (ms per megapixel per frame)
+  bytes_per_vmaf_per_encoding_time      - Combined efficiency (bytes per VMAF per second)
+  bytes_per_p5_vmaf_per_encoding_time   - Combined P5-VMAF efficiency
+
+Note: All metrics are normalized by frame count and pixel count for fair comparison
+      across different resolutions, durations, and frame rates.
         """,
     )
-    parser.add_argument("study_name", help="Name of the study to analyze (e.g., baseline_sweep)")
+
+    parser.add_argument(
+        "study_name",
+        help="Name of the study to analyze (e.g., 'baseline_sweep')",
+    )
+
+    parser.add_argument(
+        "--encoded-dir",
+        type=Path,
+        default=Path("data/encoded"),
+        help="Directory containing encoded study results (default: data/encoded)",
+    )
+
+    parser.add_argument(
+        "--output",
+        "-o",
+        type=Path,
+        help="Output directory for plots and CSV (default: results/<study_name>)",
+    )
+
     parser.add_argument(
         "--metrics",
         nargs="+",
-        choices=["vmaf", "vmaf_neg", "psnr", "ssim"],
-        default=["vmaf", "psnr", "ssim"],
-        help="Metrics to calculate (default: vmaf psnr ssim). vmaf and vmaf_neg are equivalent (both use NEG mode)",
+        choices=[m[0] for m in METRICS],
+        help="Which metrics to plot (default: all)",
     )
+
     parser.add_argument(
-        "--clips-dir",
-        type=Path,
-        default=Path("data/test_clips"),
-        help="Directory containing source clips (default: data/test_clips)",
-    )
-    parser.add_argument(
-        "--threads",
-        type=int,
-        default=None,
-        help="Number of threads for VMAF calculation (default: auto-detect all CPU cores)",
-    )
-    parser.add_argument(
-        "--continue-on-error",
+        "--no-clip-plots",
         action="store_true",
-        help="Continue analyzing remaining encodings if one fails",
+        help="Skip per-clip comparison plots",
     )
-    parser.add_argument("-v", "--verbose", action="store_true", help="Show detailed FFmpeg output")
+
+    parser.add_argument(
+        "--no-duration-analysis",
+        action="store_true",
+        help="Skip clip duration analysis plots",
+    )
+
+    parser.add_argument(
+        "--no-csv",
+        action="store_true",
+        help="Skip CSV export",
+    )
+
+    parser.add_argument(
+        "--no-report",
+        action="store_true",
+        help="Skip text summary report",
+    )
 
     args = parser.parse_args()
 
-    # Auto-detect number of threads if not specified
-    if args.threads is None:
-        args.threads = os.cpu_count() or 4  # Fallback to 4 if cpu_count() returns None
-
-    # Find study directory
-    study_dir = Path("data/encoded") / args.study_name
+    # Resolve paths
+    study_dir = args.encoded_dir / args.study_name
     if not study_dir.exists():
-        print(f"Error: Study directory not found: {study_dir}")
-        print("Available studies:")
-        encoded_dir = Path("data/encoded")
-        if encoded_dir.exists():
-            for d in sorted(encoded_dir.iterdir()):
-                if d.is_dir() and (d / "encoding_metadata.json").exists():
-                    print(f"  {d.name}")
+        print(f"Error: Study directory not found: {study_dir}", file=sys.stderr)
+        print("\nAvailable studies:", file=sys.stderr)
+        if args.encoded_dir.exists():
+            for d in args.encoded_dir.iterdir():
+                if d.is_dir():
+                    print(f"  - {d.name}", file=sys.stderr)
         sys.exit(1)
 
-    # Normalize metrics (vmaf and vmaf_neg are the same)
-    metrics = list(set(args.metrics))
-    if "vmaf_neg" in metrics:
-        metrics.remove("vmaf_neg")
-        if "vmaf" not in metrics:
-            metrics.append("vmaf")
+    analysis_file = study_dir / "measurements.json"
+    if not analysis_file.exists():
+        # Also check for legacy filename
+        legacy_file = study_dir / "analysis_metadata.json"
+        if legacy_file.exists():
+            analysis_file = legacy_file
+            print(f"Note: Using legacy file {legacy_file.name}", file=sys.stderr)
+        else:
+            print(f"Error: Measurements not found: {analysis_file}", file=sys.stderr)
+            print(f"Run: just measure-study {args.study_name}", file=sys.stderr)
+            sys.exit(1)
+
+    # Set output directory
+    output_dir = args.output or Path("results") / args.study_name
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"Analyzing study: {args.study_name}")
-    print(f"Metrics: {', '.join(metrics)}")
-    print(f"Source clips: {args.clips_dir}")
-    print(f"VMAF threads: {args.threads}")
+    print(f"Reading: {analysis_file}")
+    print(f"Output directory: {output_dir}")
 
-    # Load encoding metadata
-    try:
-        encoding_metadata = load_encoding_metadata(study_dir)
-    except FileNotFoundError as e:
-        print(f"\nError: {e}")
+    # Load measurement data
+    analysis_data = load_json(analysis_file)
+
+    # Load encoding metadata (for file sizes, encoding times in new format)
+    encoding_metadata_file = study_dir / "encoding_metadata.json"
+    encoding_metadata = None
+    if encoding_metadata_file.exists():
+        encoding_metadata = load_json(encoding_metadata_file)
+
+    df = prepare_dataframe(analysis_data, encoding_metadata)
+
+    if df.empty:
+        print("Error: No successful encodings found in analysis", file=sys.stderr)
         sys.exit(1)
 
-    encodings_to_analyze = encoding_metadata.get("encodings", [])
-    successful_encodings = [e for e in encodings_to_analyze if e.get("success")]
+    print(f"Loaded {len(df)} successful encodings")
+    print(f"Clips: {df['source_clip'].nunique()}")
+    print(f"Presets: {sorted(int(p) for p in df['preset'].unique())}")
+    print(f"CRF values: {sorted(int(c) for c in df['crf'].unique())}")
 
-    if not successful_encodings:
-        print("\nNo successful encodings found in study")
-        sys.exit(1)
+    # Aggregate by parameters (mean across clips)
+    agg_df = aggregate_by_params(df)
+    print(f"Aggregated to {len(agg_df)} parameter combinations")
 
-    print(f"\nEncodings to analyze: {len(successful_encodings)}")
+    # Determine which metrics to plot
+    metrics_to_plot = args.metrics or [m[0] for m in METRICS]
+    metric_info = {m[0]: (m[1], m[2]) for m in METRICS}
 
-    # Get unique source clips
-    unique_clips = {e["source_clip"] for e in successful_encodings}
-    print(f"Unique source clips: {len(unique_clips)}")
+    # Generate metric trio plots (heatmap + 2 line charts)
+    for metric in metrics_to_plot:
+        if metric in metric_info:
+            label, higher_is_better = metric_info[metric]
+            plot_metric_trio(agg_df, metric, label, output_dir, args.study_name, higher_is_better)
 
-    # Calculate work units for progress tracking
-    print("\nCalculating analysis workload...")
-    clip_work_units = {}
-    total_work_units = 0
+    # Per-clip comparison plots (optional)
+    if not args.no_clip_plots:
+        print("\nGenerating per-clip comparison plots...")
+        plot_clip_comparison(df, output_dir, args.study_name)
+        plot_clip_comparison_vs_crf(df, output_dir, args.study_name)
 
-    for clip_name in unique_clips:
-        source_clip = find_source_clip(clip_name, args.clips_dir)
-        if source_clip:
-            video_info = get_video_info(source_clip)
-            if video_info:
-                work_units = calculate_work_units(video_info)
-                clip_work_units[clip_name] = work_units
-                if args.verbose:
-                    print(
-                        f"  {clip_name}: {work_units:,} work units ({video_info['frame_count']} frames, {video_info['width']}x{video_info['height']})"
-                    )
-            else:
-                clip_work_units[clip_name] = 1_000_000
-        else:
-            clip_work_units[clip_name] = 1_000_000
+    # Clip duration analysis (optional)
+    if not args.no_duration_analysis:
+        print("\nGenerating clip duration analysis...")
+        plot_clip_duration_analysis(df, output_dir, args.study_name)
 
-    # Calculate total work (each encoding processes one clip)
-    for encoding in successful_encodings:
-        total_work_units += clip_work_units.get(encoding["source_clip"], 1_000_000)
+    # Export CSV
+    if not args.no_csv:
+        print("\nExporting CSV files...")
+        export_csv(df, output_dir, args.study_name)
+        export_aggregated_csv(agg_df, output_dir, args.study_name)
 
-    print(
-        f"Total workload: {total_work_units:,} work units across {len(successful_encodings)} encodings"
-    )
+    # Generate summary report
+    if not args.no_report:
+        print("\nGenerating summary report...")
+        generate_summary_report(df, agg_df, analysis_data, output_dir, args.study_name)
 
-    # Analyze each encoding
-    analysis_results = []
-    failed_count = 0
-    completed_work_units = 0
-    overall_start_time = time.time()
-
-    for i, encoding in enumerate(successful_encodings, 1):
-        # Calculate progress
-        progress_pct = (
-            (completed_work_units / total_work_units * 100) if total_work_units > 0 else 0
-        )
-        elapsed = time.time() - overall_start_time
-
-        # Estimate time remaining
-        if completed_work_units > 0:
-            avg_time_per_unit = elapsed / completed_work_units
-            remaining_units = total_work_units - completed_work_units
-            eta_seconds = avg_time_per_unit * remaining_units
-            eta_str = format_time_remaining(eta_seconds)
-            progress_str = f"[{progress_pct:.1f}%, ETA: {eta_str}]"
-        else:
-            progress_str = "[0.0%]"
-
-        print(f"\n[{i}/{len(successful_encodings)}] {progress_str}", end=" ")
-
-        try:
-            result = analyze_encoding(
-                encoding=encoding,
-                study_dir=study_dir,
-                clips_dir=args.clips_dir,
-                metrics=metrics,
-                threads=args.threads,
-                verbose=args.verbose,
-            )
-            analysis_results.append(result)
-
-            # Update completed work units
-            clip_work = clip_work_units.get(encoding["source_clip"], 1_000_000)
-            completed_work_units += clip_work
-
-            if not result["success"]:
-                failed_count += 1
-                if not args.continue_on_error:
-                    print(f"\nError: {result['error']}")
-                    print("Use --continue-on-error to continue despite failures")
-                    sys.exit(1)
-
-        except KeyboardInterrupt:
-            print("\n\nAnalysis interrupted by user")
-            sys.exit(1)
-        except Exception as e:
-            failed_count += 1
-            print(f"  ERROR: {e}")
-            if not args.continue_on_error:
-                raise
-
-    # Calculate summary
-    print("\n" + "=" * 70)
-    print("Calculating summary statistics...")
-    summary = calculate_summary(analysis_results)
-
-    # Save results
-    output_file = study_dir / "analysis_metadata.json"
-    output_data = {
-        "study_name": args.study_name,
-        "analysis_date": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
-        "metrics_calculated": metrics,
-        "vmaf_model": "vmaf_v0.6.1neg",
-        "clips_analyzed": len(unique_clips),
-        "total_encodings_analyzed": len(analysis_results),
-        "encodings": analysis_results,
-        "summary": summary,
-    }
-
-    with open(output_file, "w") as f:
-        json.dump(output_data, f, indent=2)
-
-    print("\nAnalysis complete!")
-    print(f"  Total analyzed: {len(analysis_results)}")
-    print(f"  Successful: {len(analysis_results) - failed_count}")
-    print(f"  Failed: {failed_count}")
-
-    if summary:
-        if "vmaf_range" in summary:
-            print(
-                f"\nVMAF range: {summary['vmaf_range']['min_mean']:.2f} - "
-                f"{summary['vmaf_range']['max_mean']:.2f}"
-            )
-
-        if "best_efficiency" in summary:
-            best = summary["best_efficiency"]
-            print("\nBest efficiency (VMAF/kbps):")
-            print(f"  File: {best['output_file']}")
-            print(f"  Parameters: {best['parameters']}")
-            print(f"  VMAF: {best['vmaf_mean']:.2f}")
-            if best["bitrate_kbps"] is not None:
-                print(f"  Bitrate: {best['bitrate_kbps']:.1f} kbps")
-            else:
-                print("  Bitrate: N/A")
-            print(f"  Efficiency: {best['vmaf_per_kbps']:.4f}")
-
-        if "best_quality" in summary:
-            best = summary["best_quality"]
-            print("\nBest quality (highest VMAF):")
-            print(f"  File: {best['output_file']}")
-            print(f"  Parameters: {best['parameters']}")
-            print(f"  VMAF: {best['vmaf_mean']:.2f}")
-            if best["bitrate_kbps"] is not None:
-                print(f"  Bitrate: {best['bitrate_kbps']:.1f} kbps")
-            else:
-                print("  Bitrate: N/A")
-
-        print(f"\nTotal analysis time: {summary['total_analysis_time_seconds']:.1f}s")
-
-    print(f"\nResults saved to: {output_file}")
+    print(f"\n✅ Analysis complete! Results in: {output_dir}")
 
 
 if __name__ == "__main__":

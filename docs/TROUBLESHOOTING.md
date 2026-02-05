@@ -393,7 +393,7 @@ If you're still stuck:
 1. **Check the documentation**:
    - [README.md](README.md) - Overview and quick start
    - [CONTRIBUTING.md](CONTRIBUTING.md) - Development guide
-   - [docs/ANALYSIS_GUIDE.md](docs/ANALYSIS_GUIDE.md) - Analysis system
+   - [docs/MEASUREMENT_GUIDE.md](docs/MEASUREMENT_GUIDE.md) - Measurement system
    - [ARCHITECTURE.md](ARCHITECTURE.md) - Design decisions
 
 2. **Search GitHub Issues**: Someone may have had the same problem

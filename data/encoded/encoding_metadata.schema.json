@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "Encoding Study Results Metadata",
-  "description": "Machine-generated metadata tracking encoding results for a study. Records all encodings with timing, resource usage, and output file information.",
+  "description": "Machine-generated metadata tracking encoding results for a study. Records all encodings with timing and output file information.",
   "type": "object",
   "required": ["study_config", "system_info", "start_time", "encodings"],
   "properties": {
@@ -30,31 +30,31 @@
     "system_info": {
       "type": "object",
       "description": "System information for reproducibility",
-      "required": ["cpu", "memory_gb", "os", "svt_av1_version"],
+      "required": ["cpu_model", "memory_gb", "os", "ffmpeg_version", "libsvtav1_version"],
       "properties": {
-        "cpu": {
+        "cpu_model": {
           "type": "string",
-          "description": "CPU model name"
+          "description": "CPU model name (from /proc/cpuinfo or platform)"
         },
         "cpu_cores": {
-          "type": "integer",
+          "type": ["integer", "null"],
           "description": "Number of CPU cores"
         },
         "memory_gb": {
-          "type": "number",
+          "type": ["number", "null"],
           "description": "Total system memory in GB"
         },
         "os": {
           "type": "string",
           "description": "Operating system"
         },
-        "svt_av1_version": {
-          "type": "string",
-          "description": "SVT-AV1 encoder version"
-        },
         "ffmpeg_version": {
           "type": "string",
-          "description": "FFmpeg version"
+          "description": "FFmpeg version string"
+        },
+        "libsvtav1_version": {
+          "type": "string",
+          "description": "SVT-AV1 encoder version (via FFmpeg's libsvtav1)"
         }
       }
     },
@@ -69,16 +69,12 @@
       "format": "date-time"
     },
     "encodings": {
-      "type": "array",
-      "description": "List of all encodings performed in this study",
-      "items": {
+      "type": "object",
+      "description": "Dictionary of encodings keyed by output filename",
+      "additionalProperties": {
         "type": "object",
-        "required": ["output_file", "source_clip", "parameters", "encoding_time_seconds", "file_size_bytes", "sha256"],
+        "required": ["source_clip", "parameters", "encoding_time_seconds", "file_size_bytes", "sha256", "success"],
         "properties": {
-          "output_file": {
-            "type": "string",
-            "description": "Filename of encoded output"
-          },
           "source_clip": {
             "type": "string",
             "description": "Source clip filename"
@@ -122,16 +118,6 @@
             "description": "Wall clock time for encoding (seconds)",
             "minimum": 0
           },
-          "cpu_time_seconds": {
-            "type": ["number", "null"],
-            "description": "CPU time used (seconds, null if unavailable)",
-            "minimum": 0
-          },
-          "peak_memory_mb": {
-            "type": ["number", "null"],
-            "description": "Peak memory usage in MB (null if unavailable)",
-            "minimum": 0
-          },
           "file_size_bytes": {
             "type": "integer",
             "description": "Output file size in bytes",
@@ -141,16 +127,6 @@
             "type": "string",
             "description": "SHA256 checksum of output file",
             "pattern": "^[a-f0-9]{64}$"
-          },
-          "fps": {
-            "type": ["number", "null"],
-            "description": "Encoding speed in frames per second (from encoder output)",
-            "minimum": 0
-          },
-          "bitrate_kbps": {
-            "type": ["number", "null"],
-            "description": "Output bitrate in kbps (calculated from file size and duration)",
-            "minimum": 0
           },
           "timestamp": {
             "type": "string",
@@ -162,8 +138,8 @@
             "description": "Whether encoding completed successfully"
           },
           "error": {
-            "type": ["string", "null"],
-            "description": "Error message if encoding failed"
+            "type": "string",
+            "description": "Error message if encoding failed (only present when success=false)"
           }
         }
       }

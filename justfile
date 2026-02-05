@@ -104,34 +104,34 @@ list-studies:
 dry-run-study STUDY:
     . venv/bin/activate && python scripts/encode_study.py config/studies/{{STUDY}}.json --dry-run
 
-# Analyze encoded videos (calculate VMAF, PSNR, SSIM)
+# Measure quality metrics (VMAF, PSNR, SSIM) for encoded videos
+measure-study STUDY *ARGS:
+    . venv/bin/activate && python scripts/measure_study.py {{STUDY}} {{ARGS}}
+
+# Measure with only VMAF (faster)
+measure-vmaf STUDY *ARGS:
+    . venv/bin/activate && python scripts/measure_study.py {{STUDY}} --metrics vmaf {{ARGS}}
+
+# List studies that have been encoded and are ready for measurement
+list-encoded:
+    @echo "Encoded studies ready for measurement:"
+    @find data/encoded -mindepth 1 -maxdepth 1 -type d -exec test -f {}/encoding_metadata.json \; -printf "  %f\n" 2>/dev/null || echo "  (none)"
+
+# Analyze study results (generate plots, CSV, and reports)
 analyze-study STUDY *ARGS:
     . venv/bin/activate && python scripts/analyze_study.py {{STUDY}} {{ARGS}}
 
-# Analyze with only VMAF (faster)
-analyze-vmaf STUDY *ARGS:
-    . venv/bin/activate && python scripts/analyze_study.py {{STUDY}} --metrics vmaf {{ARGS}}
+# Analyze with custom output directory
+analyze-to STUDY OUTPUT_DIR *ARGS:
+    . venv/bin/activate && python scripts/analyze_study.py {{STUDY}} --output {{OUTPUT_DIR}} {{ARGS}}
 
-# List studies that have been encoded and are ready for analysis
-list-encoded:
-    @echo "Encoded studies ready for analysis:"
-    @find data/encoded -mindepth 1 -maxdepth 1 -type d -exec test -f {}/encoding_metadata.json \; -printf "  %f\n" 2>/dev/null || echo "  (none)"
-
-# Visualize study results (generate plots and CSV)
-visualize-study STUDY *ARGS:
-    . venv/bin/activate && python scripts/visualize_study.py {{STUDY}} {{ARGS}}
-
-# Visualize with custom output directory
-visualize-to STUDY OUTPUT_DIR *ARGS:
-    . venv/bin/activate && python scripts/visualize_study.py {{STUDY}} --output {{OUTPUT_DIR}} {{ARGS}}
-
-# Generate specific metrics only
-visualize-metrics STUDY *METRICS:
-    . venv/bin/activate && python scripts/visualize_study.py {{STUDY}} --metrics {{METRICS}}
+# Analyze specific metrics only
+analyze-metrics STUDY *METRICS:
+    . venv/bin/activate && python scripts/analyze_study.py {{STUDY}} --metrics {{METRICS}}
 
 # Skip optional plots for faster processing
-visualize-fast STUDY:
-    . venv/bin/activate && python scripts/visualize_study.py {{STUDY}} --no-clip-plots --no-duration-analysis
+analyze-fast STUDY:
+    . venv/bin/activate && python scripts/analyze_study.py {{STUDY}} --no-clip-plots --no-duration-analysis
 
 # Clean extracted clips (removes videos and generated metadata, keeps schemas)
 clean-clips:

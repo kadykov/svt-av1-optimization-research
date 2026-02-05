@@ -1,23 +1,23 @@
-# Quality Analysis System
+# Quality Measurement System
 
 ## Overview
 
-The analysis system calculates quality metrics (VMAF, PSNR, SSIM) for all encodings in a study by comparing them against the original source clips.
+The measurement system calculates quality metrics (VMAF, PSNR, SSIM) for all encodings in a study by comparing them against the original source clips.
 
 ## Quick Start
 
 ```bash
-# Analyze a completed study
-just analyze-study baseline_sweep
+# Measure a completed study
+just measure-study baseline_sweep
 
 # Faster: only VMAF
-just analyze-vmaf baseline_sweep
+just measure-vmaf baseline_sweep
 
 # Use more threads
-just analyze-study baseline_sweep --threads 8
+just measure-study baseline_sweep --threads 8
 
 # Continue despite errors
-just analyze-study baseline_sweep --continue-on-error
+just measure-study baseline_sweep --continue-on-error
 ```
 
 ## Metrics Calculated
@@ -43,60 +43,46 @@ just analyze-study baseline_sweep --continue-on-error
 
 ## Output Structure
 
-Results saved to: `data/encoded/{study_name}/analysis_metadata.json`
+Results saved to: `data/encoded/{study_name}/measurements.json`
 
 ```json
 {
   "study_name": "baseline_sweep",
-  "analysis_date": "2026-01-28T...",
-  "metrics_calculated": ["vmaf", "psnr", "ssim"],
-  "vmaf_model": "vmaf_v0.6.1neg",
-  "clips_analyzed": 5,
-  "total_encodings_analyzed": 280,
-  "encodings": [
-    {
-      "output_file": "clip1_p6_crf28.mkv",
-      "source_clip": "clip1.mkv",
-      "parameters": {"preset": 6, "crf": 28},
-      "metrics": {
-        "vmaf": {
-          "mean": 95.2,
-          "harmonic_mean": 94.8,
-          "percentile_5": 91.2,
-          "min": 89.3,
-          "max": 98.1
-        },
-        "psnr": {"avg_mean": 42.3},
-        "ssim": {"avg_mean": 0.982}
+  "encoding_metadata_file": "encoding_metadata.json",
+  "start_time": "2026-01-28T...",
+  "measurements": {
+    "clip1_p6_crf28.mkv": {
+      "vmaf": {
+        "mean": 95.2,
+        "harmonic_mean": 94.8,
+        "percentile_5": 91.2,
+        "min": 89.3,
+        "max": 98.1
       },
-      "efficiency_metrics": {
-        "vmaf_per_kbps": 0.0234,
-        "vmaf_per_mbyte": 31.2,
-        "quality_per_encoding_second": 2.1
-      }
+      "psnr": {"y": 42.3, "u": 45.6, "v": 46.1},
+      "ssim": {"y": 0.982, "u": 0.991, "v": 0.993, "all": 0.988},
+      "video_info": {
+        "encoded_duration": 10.0,
+        "source_duration": 10.0,
+        "duration_match": true,
+        "frame_count": 300
+      },
+      "measurement_time_seconds": 15.2,
+      "success": true
     }
-  ],
+  },
   "summary": {
-    "vmaf_range": {"min_mean": 78.5, "max_mean": 98.2},
-    "best_efficiency": {
-      "output_file": "...",
-      "parameters": {"preset": 8, "crf": 32},
-      "vmaf_mean": 92.5,
-      "vmaf_per_kbps": 0.0456
-    },
-    "best_quality": {
-      "output_file": "...",
-      "parameters": {"preset": 4, "crf": 20},
-      "vmaf_mean": 98.2,
-      "bitrate_kbps": 5234.5
-    }
+    "total_measurements": 280,
+    "successful_measurements": 278,
+    "failed_measurements": 2,
+    "vmaf_range": {"min": 78.5, "max": 98.2, "mean": 91.5}
   }
 }
 ```
 
 ## Efficiency Metrics
 
-Automatically calculated for each encoding:
+Efficiency metrics are calculated in the analysis phase (via `analyze_study.py`), not stored in measurements.json. This includes:
 
 1. **VMAF per kbps**: Quality per unit of bitrate
    - Higher is better (more quality per bandwidth)
@@ -127,41 +113,41 @@ The analysis script calculates **video-only bitrate** using FFprobe:
 
 ## Usage Examples
 
-### Basic Analysis
+### Basic Measurement
 ```bash
-just analyze-study baseline_sweep
+just measure-study baseline_sweep
 ```
 
 ### Only VMAF (Faster)
 ```bash
-just analyze-vmaf baseline_sweep
+just measure-vmaf baseline_sweep
 ```
 
 ### Specific Metrics
 ```bash
 # VMAF and PSNR only
 . venv/bin/activate
-python scripts/analyze_study.py baseline_sweep --metrics vmaf psnr
+python scripts/measure_study.py baseline_sweep --metrics vmaf psnr
 ```
 
 ### Performance Tuning
 ```bash
 # Use more threads for VMAF (default: 4)
-just analyze-study baseline_sweep --threads 8
+just measure-study baseline_sweep --threads 8
 
 # Verbose output to debug
-just analyze-study baseline_sweep -v
+just measure-study baseline_sweep -v
 ```
 
-### Resilient Analysis
+### Resilient Measurement
 ```bash
-# Continue even if some encodings fail to analyze
-just analyze-study baseline_sweep --continue-on-error
+# Continue even if some encodings fail to measure
+just measure-study baseline_sweep --continue-on-error
 ```
 
 ## Workflow
 
-Complete workflow from raw videos to analysis:
+Complete workflow from raw videos to measurement:
 
 ```bash
 # 1. Download videos
@@ -173,11 +159,11 @@ just extract-clips 10 15 30
 # 3. Run encoding study
 just encode-study baseline_sweep
 
-# 4. Analyze quality
-just analyze-study baseline_sweep
+# 4. Measure quality
+just measure-study baseline_sweep
 
 # 5. Review results
-cat data/encoded/baseline_sweep/analysis_metadata.json
+cat data/encoded/baseline_sweep/measurements.json
 ```
 
 ## Performance Notes
@@ -192,16 +178,15 @@ cat data/encoded/baseline_sweep/analysis_metadata.json
 ### Optimization Tips
 1. **Use more threads**: `--threads 8` (but diminishing returns beyond CPU cores)
 2. **VMAF only**: Skip PSNR/SSIM if not needed
-3. **Parallel studies**: Analyze multiple studies simultaneously if you have CPU cores
+3. **Parallel studies**: Measure multiple studies simultaneously if you have CPU cores
 4. **SSD storage**: Faster I/O helps with large encoded files
 
 ## Next Steps
 
-After analysis, you can:
-1. **Visualize results**: Plot VMAF vs bitrate, preset impact, etc. (TODO: visualization script)
+After measurement, you can:
+1. **Analyze and visualize**: `just analyze-study baseline_sweep` - generates plots, CSV, and reports
 2. **Compare studies**: Analyze multiple parameter sweeps
 3. **Optimize parameters**: Find sweet spots for your use case
-4. **Export data**: CSV export for external analysis (TODO)
 
 ## Troubleshooting
 
@@ -219,7 +204,7 @@ After analysis, you can:
 - Check video compatibility (both encoded and source)
 - Try verbose mode: `-v`
 
-### Slow analysis
+### Slow measurement
 - Increase threads: `--threads 8`
-- Use VMAF only: `just analyze-vmaf baseline_sweep`
+- Use VMAF only: `just measure-vmaf baseline_sweep`
 - Check CPU usage (should be near 100% during VMAF)

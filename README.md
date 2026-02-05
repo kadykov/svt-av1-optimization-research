@@ -100,40 +100,40 @@ just encode-study film_grain --continue-on-error
 just encode-study baseline_sweep -v
 ```
 
-### Quality Analysis
+### Quality Measurement
 ```bash
-# List encoded studies ready for analysis
+# List encoded studies ready for measurement
 just list-encoded
 
-# Analyze study (VMAF + PSNR + SSIM)
-just analyze-study baseline_sweep
+# Measure study (VMAF + PSNR + SSIM)
+just measure-study baseline_sweep
 
-# Analyze with only VMAF (faster)
-just analyze-vmaf baseline_sweep
+# Measure with only VMAF (faster)
+just measure-vmaf baseline_sweep
 
-# Continue despite analysis errors
-just analyze-study baseline_sweep --continue-on-error
+# Continue despite measurement errors
+just measure-study baseline_sweep --continue-on-error
 
 # Use more threads for faster VMAF calculation
-just analyze-study baseline_sweep --threads 8
+just measure-study baseline_sweep --threads 8
 
 # Verbose output with FFmpeg commands
-just analyze-study baseline_sweep -v
+just measure-study baseline_sweep -v
 ```
 
-### Visualization & Results
+### Analysis & Visualization
 ```bash
 # Generate all plots and CSV for a study
-just visualize-study baseline_sweep
+just analyze-study baseline_sweep
 
 # Generate specific metrics only
-python scripts/visualize_study.py baseline_sweep --metrics vmaf_combined vmaf_per_bpp
+python scripts/analyze_study.py baseline_sweep --metrics vmaf_combined vmaf_per_bpp
 
 # Skip optional plots for faster processing
-python scripts/visualize_study.py baseline_sweep --no-clip-plots --no-duration-analysis
+python scripts/analyze_study.py baseline_sweep --no-clip-plots --no-duration-analysis
 
 # Skip CSV or report generation
-python scripts/visualize_study.py baseline_sweep --no-csv --no-report
+python scripts/analyze_study.py baseline_sweep --no-csv --no-report
 
 # Clean analysis results (plots, CSVs)
 just clean-results
@@ -245,11 +245,11 @@ This file is NOT committed (in .gitignore) because:
 - Reproducible from study config + clips
 - Results will be published to GitHub Pages instead
 
-**`data/encoded/{study_name}/analysis_metadata.json`** - Machine-generated:
+**`data/encoded/{study_name}/measurements.json`** - Machine-generated:
 - Quality metrics per encoding (VMAF, PSNR, SSIM)
 - VMAF statistics: mean, harmonic mean, percentiles, min/max
-- Efficiency metrics: quality per bitrate, quality per encoding time
-- Summary: best quality, best efficiency, metric ranges
+- Video info: duration validation, frame count
+- Measurement timing
 
 This file is NOT committed (in .gitignore) because:
 - Generated from encoded videos
@@ -299,8 +299,8 @@ Studies are focused parameter sweeps stored in `config/studies/`:
 1. Extract clips with appropriate filters: `just extract-category 3d_animation 5 20 30`
 2. Preview study: `just dry-run-study film_grain`
 3. Run encoding: `just encode-study film_grain`
-4. Analyze quality: `just analyze-study film_grain`
-5. Review results: `data/encoded/film_grain/analysis_metadata.json`
+4. Measure quality: `just measure-study film_grain`
+5. Analyze results: `just analyze-study film_grain`
 
 ## Documentation
 
@@ -308,7 +308,7 @@ Studies are focused parameter sweeps stored in `config/studies/`:
 - **[ARCHITECTURE.md](ARCHITECTURE.md)** - Design decisions and data flow architecture
 - **[OVERVIEW.md](OVERVIEW.md)** - Research methodology, goals, and hypotheses
 - **[docs/WORKFLOW_EXAMPLE.md](docs/WORKFLOW_EXAMPLE.md)** - Complete end-to-end workflow example
-- **[docs/ANALYSIS_GUIDE.md](docs/ANALYSIS_GUIDE.md)** - Quality metrics system (VMAF, PSNR, SSIM)
+- **[docs/MEASUREMENT_GUIDE.md](docs/MEASUREMENT_GUIDE.md)** - Quality metrics system (VMAF, PSNR, SSIM)
 - **[docs/VISUALIZATION_GUIDE.md](docs/VISUALIZATION_GUIDE.md)** - Analysis and plotting system
 - **[docs/PROGRESS_TRACKING.md](docs/PROGRESS_TRACKING.md)** - Progress tracking and ETA estimation
 - **[docs/VMAF_NOTES.md](docs/VMAF_NOTES.md)** - Why we use VMAF NEG mode for codec evaluation

@@ -1,5 +1,5 @@
 """
-Unit tests for visualize_study.py.
+Unit tests for analyze_study.py.
 
 Tests the data preparation and analysis functions without generating plots.
 """
@@ -12,9 +12,9 @@ import pandas as pd
 import pytest
 
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / "scripts"))
 
-from visualize_study import prepare_dataframe
+from analyze_study import prepare_dataframe
 
 
 @pytest.fixture
