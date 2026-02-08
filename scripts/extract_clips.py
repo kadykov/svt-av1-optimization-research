@@ -99,6 +99,7 @@ def extract_clip(
         FFV1 codec is used because it's mathematically lossless, widely supported,
         and produces files with correct frame ordering. The tradeoff is larger file
         sizes and slower extraction (~10x larger, ~5x slower than stream copy).
+        Note: FFV1 requires MKV container format (not compatible with MP4).
     """
     if lossless:
         # Use FFV1 lossless codec to ensure proper frame ordering

@@ -380,7 +380,7 @@ def test_extract_clip(test_video_path: Path, tmp_path: Path):
     if not test_video_path.exists():
         pytest.skip("Test video fixture not found")
 
-    output_path = tmp_path / "extracted_clip.mp4"
+    output_path = tmp_path / "extracted_clip.mkv"
 
     # Extract a 0.5-second clip starting at 0.2 seconds
     success = extract_clips.extract_clip(
